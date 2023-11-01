@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 25 Mar 2021 19:52:45 -0500
+Subject: [PATCH] multipathd: improve getting parent udevice in rescan_path
+
+Instead of looping through parents and checking, just call
+udev_device_get_parent_with_subsystem_devtype() to get the
+right one.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ multipathd/main.c | 14 +++++---------
+ 1 file changed, 5 insertions(+), 9 deletions(-)
+
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 1fbc31eb..4598d354 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -823,16 +823,12 @@ ev_remove_map (char * devname, char * alias, int minor, struct vectors * vecs)
+ }
+ 
+ static void
+-rescan_path(struct udev_device *parent)
++rescan_path(struct udev_device *ud)
+ {
+-	while(parent) {
+-		const char *subsys = udev_device_get_subsystem(parent);
+-		if (subsys && !strncmp(subsys, "scsi", 4))
+-			break;
+-		parent = udev_device_get_parent(parent);
+-	}
+-	if (parent)
+-		sysfs_attr_set_value(parent, "rescan", "1", strlen("1"));
++	ud = udev_device_get_parent_with_subsystem_devtype(ud, "scsi",
++							   "scsi_device");
++	if (ud)
++		sysfs_attr_set_value(ud, "rescan", "1", strlen("1"));
+ }
+ 
+ void
+-- 
+2.17.2
+

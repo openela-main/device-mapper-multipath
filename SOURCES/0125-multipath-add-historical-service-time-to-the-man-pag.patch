@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 15 Nov 2022 09:01:36 -0600
+Subject: [PATCH] multipath: add historical-service-time to the man page
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipath/multipath.conf.5 | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/multipath/multipath.conf.5 b/multipath/multipath.conf.5
+index cb07a62c..d8a98435 100644
+--- a/multipath/multipath.conf.5
++++ b/multipath/multipath.conf.5
+@@ -205,6 +205,11 @@ of outstanding I/O to the path.
+ (Since 2.6.31 kernel) Choose the path for the next bunch of I/O based on the amount
+ of outstanding I/O to the path and its relative throughput.
+ .TP
++.I "historical-service-time 0"
++(Since 4.18.0-305.3.el8 kernel) Choose the path for the next bunch of I/O based
++on the estimation of future service time based on the history of previous I/O
++submitted to each path.
++.TP
+ The default is: \fBservice-time 0\fR
+ .RE
+ .

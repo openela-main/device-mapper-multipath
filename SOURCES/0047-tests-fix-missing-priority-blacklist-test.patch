@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 16 Nov 2020 23:21:41 -0600
+Subject: [PATCH] tests: fix missing priority blacklist test
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ tests/blacklist.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/tests/blacklist.c b/tests/blacklist.c
+index d20e97af..401600d9 100644
+--- a/tests/blacklist.c
++++ b/tests/blacklist.c
+@@ -378,7 +378,6 @@ static void test_property_missing(void **state)
+ {
+ 	static struct udev_device udev = { "sdb", { "ID_FOO", "ID_BAZ", "ID_BAR", "ID_SERIAL", NULL } };
+ 	conf.blist_property = blist_property_wwn;
+-	expect_condlog(3, "sdb: blacklisted, udev property missing\n");
+ 	assert_int_equal(filter_property(&conf, &udev, 3, "ID_SERIAL"),
+ 			 MATCH_NOTHING);
+ 	assert_int_equal(filter_property(&conf, &udev, 3, "ID_BLAH"),
+-- 
+2.17.2
+

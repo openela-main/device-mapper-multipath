@@ -1,0 +1,295 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Wed, 14 Oct 2020 18:38:20 -0500
+Subject: [PATCH] libmultipath: add eh_deadline multipath.conf parameter
+
+There are times a fc rport is never lost, meaning that fast_io_fail_tmo
+and dev_loss_tmo never trigger, but scsi commands still hang. This can
+cause problems in cases where users have string timing requirements, and
+the easiest way to solve these issues is to set eh_deadline. Since it's
+already possible to set fast_io_fail_tmo and dev_loss_tmo from
+multipath.conf, and have multipath take care of setting it correctly for
+the scsi devices in sysfs, it makes sense to allow users to set
+eh_deadline here as well.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/config.c      |  2 ++
+ libmultipath/config.h      |  2 ++
+ libmultipath/configure.c   |  1 +
+ libmultipath/dict.c        | 10 +++++++
+ libmultipath/discovery.c   | 58 +++++++++++++++++++++++++++++++++-----
+ libmultipath/propsel.c     | 17 +++++++++++
+ libmultipath/propsel.h     |  1 +
+ libmultipath/structs.h     |  7 +++++
+ multipath/multipath.conf.5 | 16 +++++++++++
+ 9 files changed, 107 insertions(+), 7 deletions(-)
+
+diff --git a/libmultipath/config.c b/libmultipath/config.c
+index 26f8e050..a71db2d0 100644
+--- a/libmultipath/config.c
++++ b/libmultipath/config.c
+@@ -359,6 +359,7 @@ merge_hwe (struct hwentry * dst, struct hwentry * src)
+ 	merge_num(flush_on_last_del);
+ 	merge_num(fast_io_fail);
+ 	merge_num(dev_loss);
++	merge_num(eh_deadline);
+ 	merge_num(user_friendly_names);
+ 	merge_num(retain_hwhandler);
+ 	merge_num(detect_prio);
+@@ -514,6 +515,7 @@ store_hwe (vector hwtable, struct hwentry * dhwe)
+ 	hwe->flush_on_last_del = dhwe->flush_on_last_del;
+ 	hwe->fast_io_fail = dhwe->fast_io_fail;
+ 	hwe->dev_loss = dhwe->dev_loss;
++	hwe->eh_deadline = dhwe->eh_deadline;
+ 	hwe->user_friendly_names = dhwe->user_friendly_names;
+ 	hwe->retain_hwhandler = dhwe->retain_hwhandler;
+ 	hwe->detect_prio = dhwe->detect_prio;
+diff --git a/libmultipath/config.h b/libmultipath/config.h
+index f38c7639..a22c1b4e 100644
+--- a/libmultipath/config.h
++++ b/libmultipath/config.h
+@@ -64,6 +64,7 @@ struct hwentry {
+ 	int flush_on_last_del;
+ 	int fast_io_fail;
+ 	unsigned int dev_loss;
++	int eh_deadline;
+ 	int user_friendly_names;
+ 	int retain_hwhandler;
+ 	int detect_prio;
+@@ -149,6 +150,7 @@ struct config {
+ 	int attribute_flags;
+ 	int fast_io_fail;
+ 	unsigned int dev_loss;
++	int eh_deadline;
+ 	int log_checker_err;
+ 	int allow_queueing;
+ 	int find_multipaths;
+diff --git a/libmultipath/configure.c b/libmultipath/configure.c
+index 96c79610..b7113291 100644
+--- a/libmultipath/configure.c
++++ b/libmultipath/configure.c
+@@ -340,6 +340,7 @@ int setup_map(struct multipath *mpp, char *params, int params_size,
+ 	select_gid(conf, mpp);
+ 	select_fast_io_fail(conf, mpp);
+ 	select_dev_loss(conf, mpp);
++	select_eh_deadline(conf, mpp);
+ 	select_reservation_key(conf, mpp);
+ 	select_deferred_remove(conf, mpp);
+ 	select_marginal_path_err_sample_time(conf, mpp);
+diff --git a/libmultipath/dict.c b/libmultipath/dict.c
+index ce8e1cda..8fd91d8c 100644
+--- a/libmultipath/dict.c
++++ b/libmultipath/dict.c
+@@ -911,6 +911,13 @@ declare_ovr_snprint(dev_loss, print_dev_loss)
+ declare_hw_handler(dev_loss, set_dev_loss)
+ declare_hw_snprint(dev_loss, print_dev_loss)
+ 
++declare_def_handler(eh_deadline, set_undef_off_zero)
++declare_def_snprint(eh_deadline, print_undef_off_zero)
++declare_ovr_handler(eh_deadline, set_undef_off_zero)
++declare_ovr_snprint(eh_deadline, print_undef_off_zero)
++declare_hw_handler(eh_deadline, set_undef_off_zero)
++declare_hw_snprint(eh_deadline, print_undef_off_zero)
++
+ static int
+ set_pgpolicy(vector strvec, void *ptr)
+ {
+@@ -1776,6 +1783,7 @@ init_keywords(vector keywords)
+ 	install_keyword("gid", &def_gid_handler, &snprint_def_gid);
+ 	install_keyword("fast_io_fail_tmo", &def_fast_io_fail_handler, &snprint_def_fast_io_fail);
+ 	install_keyword("dev_loss_tmo", &def_dev_loss_handler, &snprint_def_dev_loss);
++	install_keyword("eh_deadline", &def_eh_deadline_handler, &snprint_def_eh_deadline);
+ 	install_keyword("bindings_file", &def_bindings_file_handler, &snprint_def_bindings_file);
+ 	install_keyword("wwids_file", &def_wwids_file_handler, &snprint_def_wwids_file);
+ 	install_keyword("prkeys_file", &def_prkeys_file_handler, &snprint_def_prkeys_file);
+@@ -1885,6 +1893,7 @@ init_keywords(vector keywords)
+ 	install_keyword("flush_on_last_del", &hw_flush_on_last_del_handler, &snprint_hw_flush_on_last_del);
+ 	install_keyword("fast_io_fail_tmo", &hw_fast_io_fail_handler, &snprint_hw_fast_io_fail);
+ 	install_keyword("dev_loss_tmo", &hw_dev_loss_handler, &snprint_hw_dev_loss);
++	install_keyword("eh_deadline", &hw_eh_deadline_handler, &snprint_hw_eh_deadline);
+ 	install_keyword("user_friendly_names", &hw_user_friendly_names_handler, &snprint_hw_user_friendly_names);
+ 	install_keyword("retain_attached_hw_handler", &hw_retain_hwhandler_handler, &snprint_hw_retain_hwhandler);
+ 	install_keyword("detect_prio", &hw_detect_prio_handler, &snprint_hw_detect_prio);
+@@ -1925,6 +1934,7 @@ init_keywords(vector keywords)
+ 	install_keyword("flush_on_last_del", &ovr_flush_on_last_del_handler, &snprint_ovr_flush_on_last_del);
+ 	install_keyword("fast_io_fail_tmo", &ovr_fast_io_fail_handler, &snprint_ovr_fast_io_fail);
+ 	install_keyword("dev_loss_tmo", &ovr_dev_loss_handler, &snprint_ovr_dev_loss);
++	install_keyword("eh_deadline", &ovr_eh_deadline_handler, &snprint_ovr_eh_deadline);
+ 	install_keyword("user_friendly_names", &ovr_user_friendly_names_handler, &snprint_ovr_user_friendly_names);
+ 	install_keyword("retain_attached_hw_handler", &ovr_retain_hwhandler_handler, &snprint_ovr_retain_hwhandler);
+ 	install_keyword("detect_prio", &ovr_detect_prio_handler, &snprint_ovr_detect_prio);
+diff --git a/libmultipath/discovery.c b/libmultipath/discovery.c
+index 01aadba9..a328aafa 100644
+--- a/libmultipath/discovery.c
++++ b/libmultipath/discovery.c
+@@ -577,6 +577,42 @@ sysfs_get_asymmetric_access_state(struct path *pp, char *buff, int buflen)
+ 	return !!preferred;
+ }
+ 
++static int
++sysfs_set_eh_deadline(struct multipath *mpp, struct path *pp)
++{
++	struct udev_device *hostdev;
++	char host_name[HOST_NAME_LEN], value[16];
++	int ret;
++
++	if (mpp->eh_deadline == EH_DEADLINE_UNSET)
++		return 0;
++
++	sprintf(host_name, "host%d", pp->sg_id.host_no);
++	hostdev = udev_device_new_from_subsystem_sysname(udev,
++			"scsi_host", host_name);
++	if (!hostdev)
++		return 1;
++
++	if (mpp->eh_deadline == EH_DEADLINE_OFF)
++		sprintf(value, "off");
++	else if (mpp->eh_deadline == EH_DEADLINE_ZERO)
++		sprintf(value, "0");
++	else
++		snprintf(value, 16, "%u", mpp->eh_deadline);
++
++	ret = sysfs_attr_set_value(hostdev, "eh_deadline",
++				   value, strlen(value));
++	/*
++	 * not all scsi drivers support setting eh_deadline, so failing
++	 * is totally reasonable
++	 */
++	if (ret <= 0)
++		condlog(4, "%s: failed to set eh_deadline to %s, error %d", udev_device_get_sysname(hostdev), value, -ret);
++
++	udev_device_unref(hostdev);
++	return (ret <= 0);
++}
++
+ static void
+ sysfs_set_rport_tmo(struct multipath *mpp, struct path *pp)
+ {
+@@ -787,16 +823,24 @@ sysfs_set_scsi_tmo (struct multipath *mpp, unsigned int checkint)
+ 			mpp->alias, mpp->fast_io_fail);
+ 		mpp->fast_io_fail = MP_FAST_IO_FAIL_OFF;
+ 	}
+-	if (!mpp->dev_loss && mpp->fast_io_fail == MP_FAST_IO_FAIL_UNSET)
++	if (!mpp->dev_loss && mpp->fast_io_fail == MP_FAST_IO_FAIL_UNSET &&
++	    mpp->eh_deadline == EH_DEADLINE_UNSET)
+ 		return 0;
+ 
+ 	vector_foreach_slot(mpp->paths, pp, i) {
+-		if (pp->sg_id.proto_id == SCSI_PROTOCOL_FCP)
+-			sysfs_set_rport_tmo(mpp, pp);
+-		if (pp->sg_id.proto_id == SCSI_PROTOCOL_ISCSI)
+-			sysfs_set_session_tmo(mpp, pp);
+-		if (pp->sg_id.proto_id == SCSI_PROTOCOL_SAS)
+-			sysfs_set_nexus_loss_tmo(mpp, pp);
++		if (pp->bus != SYSFS_BUS_SCSI)
++			continue;
++
++		if (mpp->dev_loss ||
++		    mpp->fast_io_fail != MP_FAST_IO_FAIL_UNSET) {
++			if (pp->sg_id.proto_id == SCSI_PROTOCOL_FCP)
++				sysfs_set_rport_tmo(mpp, pp);
++			else if (pp->sg_id.proto_id == SCSI_PROTOCOL_ISCSI)
++				sysfs_set_session_tmo(mpp, pp);
++			else if (pp->sg_id.proto_id == SCSI_PROTOCOL_SAS)
++				sysfs_set_nexus_loss_tmo(mpp, pp);
++		}
++		sysfs_set_eh_deadline(mpp, pp);
+ 	}
+ 	return 0;
+ }
+diff --git a/libmultipath/propsel.c b/libmultipath/propsel.c
+index 725db2b1..1150cfe8 100644
+--- a/libmultipath/propsel.c
++++ b/libmultipath/propsel.c
+@@ -776,6 +776,23 @@ out:
+ 	return 0;
+ }
+ 
++int select_eh_deadline(struct config *conf, struct multipath *mp)
++{
++	const char *origin;
++	char buff[12];
++
++	mp_set_ovr(eh_deadline);
++	mp_set_hwe(eh_deadline);
++	mp_set_conf(eh_deadline);
++	mp->eh_deadline = EH_DEADLINE_UNSET;
++	/* not changing sysfs in default cause, so don't print anything */
++	return 0;
++out:
++	print_undef_off_zero(buff, 12, mp->eh_deadline);
++	condlog(3, "%s: eh_deadline = %s %s", mp->alias, buff, origin);
++	return 0;
++}
++
+ int select_flush_on_last_del(struct config *conf, struct multipath *mp)
+ {
+ 	const char *origin;
+diff --git a/libmultipath/propsel.h b/libmultipath/propsel.h
+index 3d6edd8a..a68bacf0 100644
+--- a/libmultipath/propsel.h
++++ b/libmultipath/propsel.h
+@@ -17,6 +17,7 @@ int select_uid(struct config *conf, struct multipath *mp);
+ int select_gid(struct config *conf, struct multipath *mp);
+ int select_fast_io_fail(struct config *conf, struct multipath *mp);
+ int select_dev_loss(struct config *conf, struct multipath *mp);
++int select_eh_deadline(struct config *conf, struct multipath *mp);
+ int select_reservation_key(struct config *conf, struct multipath *mp);
+ int select_retain_hwhandler (struct config *conf, struct multipath * mp);
+ int select_detect_prio(struct config *conf, struct path * pp);
+diff --git a/libmultipath/structs.h b/libmultipath/structs.h
+index 29209984..65542dea 100644
+--- a/libmultipath/structs.h
++++ b/libmultipath/structs.h
+@@ -246,6 +246,12 @@ enum fast_io_fail_states {
+ 	MP_FAST_IO_FAIL_ZERO = UOZ_ZERO,
+ };
+ 
++enum eh_deadline_states {
++	EH_DEADLINE_UNSET = UOZ_UNDEF,
++	EH_DEADLINE_OFF = UOZ_OFF,
++	EH_DEADLINE_ZERO = UOZ_ZERO,
++};
++
+ struct vpd_vendor_page {
+ 	int pg;
+ 	const char *name;
+@@ -366,6 +372,7 @@ struct multipath {
+ 	int ghost_delay;
+ 	int ghost_delay_tick;
+ 	unsigned int dev_loss;
++	int eh_deadline;
+ 	uid_t uid;
+ 	gid_t gid;
+ 	mode_t mode;
+diff --git a/multipath/multipath.conf.5 b/multipath/multipath.conf.5
+index 6dc26f10..60954574 100644
+--- a/multipath/multipath.conf.5
++++ b/multipath/multipath.conf.5
+@@ -700,6 +700,22 @@ The default is: \fB600\fR
+ .
+ .
+ .TP
++.B eh_deadline
++Specify the maximum number of seconds the SCSI layer will spend doing error
++handling when scsi devices fail. After this timeout the scsi layer will perform
++a full HBA reset. Setting this may be necessary in cases where the rport is
++never lost, so \fIfast_io_fail_tmo\fR and \fIdev_loss_tmo\fR will never
++trigger, but (frequently do to load) scsi commands still hang. \fBNote:\fR when
++the scsi error handler performs the HBA reset, all target paths on that HBA
++will be affected. eh_deadline should only be set in cases where all targets on
++the affected HBAs are multipathed.
++.RS
++.TP
++The default is: \fB<unset>\fR
++.RE
++.
++.
++.TP
+ .B bindings_file
+ The full pathname of the binding file to be used when the user_friendly_names
+ option is set.
+-- 
+2.17.2
+

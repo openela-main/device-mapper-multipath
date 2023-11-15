@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 3 Nov 2020 14:27:58 -0600
+Subject: [PATCH] libmultipath: factor out code to get vpd page data
+
+A future patch will reuse the code to get the vpd page data, so factor
+it out from get_vpd_sgio().
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/discovery.c | 19 +++++++++++++++----
+ 1 file changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/libmultipath/discovery.c b/libmultipath/discovery.c
+index aa5942c3..eb1e735d 100644
+--- a/libmultipath/discovery.c
++++ b/libmultipath/discovery.c
+@@ -1239,11 +1239,10 @@ get_vpd_sysfs (struct udev_device *parent, int pg, char * str, int maxlen)
+ 	return len;
+ }
+ 
+-int
+-get_vpd_sgio (int fd, int pg, int vend_id, char * str, int maxlen)
++static int
++fetch_vpd_page(int fd, int pg, unsigned char *buff)
+ {
+-	int len, buff_len;
+-	unsigned char buff[4096];
++	int buff_len;
+ 
+ 	memset(buff, 0x0, 4096);
+ 	if (sgio_get_vpd(buff, 4096, fd, pg) < 0) {
+@@ -1264,6 +1263,18 @@ get_vpd_sgio (int fd, int pg, int vend_id, char * str, int maxlen)
+ 		condlog(3, "vpd pg%02x page truncated", pg);
+ 		buff_len = 4096;
+ 	}
++	return buff_len;
++}
++
++int
++get_vpd_sgio (int fd, int pg, int vend_id, char * str, int maxlen)
++{
++	int len, buff_len;
++	unsigned char buff[4096];
++
++	buff_len = fetch_vpd_page(fd, pg, buff);
++	if (buff_len < 0)
++		return buff_len;
+ 	if (pg == 0x80)
+ 		len = parse_vpd_pg80(buff, str, maxlen);
+ 	else if (pg == 0x83)
+-- 
+2.17.2
+

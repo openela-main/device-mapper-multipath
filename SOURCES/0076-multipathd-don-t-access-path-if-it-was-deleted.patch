@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Fri, 23 Jul 2021 14:10:06 -0500
+Subject: [PATCH] multipathd: don't access path if it was deleted
+
+ev_remove_path() could fail and still delete the path. This could cause
+problems for handle_path_wwid_change(), which expected that a failure
+meant that the path still existed. ev_remove_path now returns a
+different error code for failure to reload the multipath device, so that
+it can be differentiated from cases where the path was no removed.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipathd/main.c | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/multipathd/main.c b/multipathd/main.c
+index e6c19ab2..823b53a2 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -86,6 +86,9 @@
+ #define FILE_NAME_SIZE 256
+ #define CMDSIZE 160
+ 
++#define PATH_REMOVE_FAILED 1
++#define MAP_RELOAD_FAILED 2
++
+ #define LOG_MSG(lvl, verb, pp)					\
+ do {								\
+ 	if (pp->mpp && checker_selected(&pp->checker) &&	\
+@@ -840,7 +843,7 @@ handle_path_wwid_change(struct path *pp, struct vectors *vecs)
+ 		return;
+ 
+ 	udd = udev_device_ref(pp->udev);
+-	if (ev_remove_path(pp, vecs, 1) != 0 && pp->mpp) {
++	if (ev_remove_path(pp, vecs, 1) == PATH_REMOVE_FAILED && pp->mpp) {
+ 		pp->dmstate = PSTATE_FAILED;
+ 		dm_fail_path(pp->mpp->alias, pp->dev_t);
+ 	}
+@@ -1226,13 +1229,13 @@ ev_remove_path (struct path *pp, struct vectors * vecs, int need_do_map)
+ 			condlog(0, "%s: failed in domap for "
+ 				"removal of path %s",
+ 				mpp->alias, pp->dev);
+-			retval = 1;
++			retval = MAP_RELOAD_FAILED;
+ 		} else {
+ 			/*
+ 			 * update our state from kernel
+ 			 */
+ 			if (setup_multipath(vecs, mpp))
+-				return 1;
++				return PATH_REMOVE_FAILED;
+ 			sync_map_state(mpp);
+ 
+ 			condlog(2, "%s [%s]: path removed from map %s",
+@@ -1250,7 +1253,7 @@ out:
+ 
+ fail:
+ 	remove_map_and_stop_waiter(mpp, vecs);
+-	return 1;
++	return PATH_REMOVE_FAILED;
+ }
+ 
+ static int

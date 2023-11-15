@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 15 Dec 2020 12:47:14 -0600
+Subject: [PATCH] multipath.conf.5: Improve checker_timeout description
+
+I was asked to explain how checker_timeout works for checkers like
+directio, that don't issue scsi commands with an explicit timeout
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipath/multipath.conf.5 | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/multipath/multipath.conf.5 b/multipath/multipath.conf.5
+index 60954574..a5686090 100644
+--- a/multipath/multipath.conf.5
++++ b/multipath/multipath.conf.5
+@@ -634,8 +634,13 @@ The default is: \fBno\fR
+ .
+ .TP
+ .B checker_timeout
+-Specify the timeout to use for path checkers and prioritizers that issue SCSI
+-commands with an explicit timeout, in seconds.
++Specify the timeout to use for path checkers and prioritizers, in seconds.
++Only prioritizers that issue scsi commands use checker_timeout. Checkers
++that support an asynchronous mode (\fItur\fR and \fIdirectio\fR), will
++return shortly after being called by multipathd, regardless of whether the
++storage array responds. If the storage array hasn't responded, mulitpathd will
++check for a response every second, until \fIchecker_timeout\fR seconds have
++elapsed.
+ .RS
+ .TP
+ The default is: in \fB/sys/block/sd<x>/device/timeout\fR
+-- 
+2.17.2
+

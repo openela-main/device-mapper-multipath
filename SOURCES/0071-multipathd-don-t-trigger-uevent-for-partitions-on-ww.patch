@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 25 Mar 2021 19:52:46 -0500
+Subject: [PATCH] multipathd: don't trigger uevent for partitions on wwid
+ change
+
+If the wwid changed, the device is no longer the same, so sending add
+events to the devices partitions doesn't make any sense.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ multipathd/main.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 4598d354..e6c19ab2 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -846,7 +846,6 @@ handle_path_wwid_change(struct path *pp, struct vectors *vecs)
+ 	}
+ 	rescan_path(udd);
+ 	sysfs_attr_set_value(udd, "uevent", "add", strlen("add"));
+-	trigger_partitions_udev_change(udd, "add", strlen("add"));
+ 	udev_device_unref(udd);
+ }
+ 
+-- 
+2.17.2
+

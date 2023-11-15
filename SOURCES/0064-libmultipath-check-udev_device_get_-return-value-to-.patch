@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lixiaokeng <lixiaokeng@huawei.com>
+Date: Mon, 21 Sep 2020 12:00:39 +0800
+Subject: [PATCH] libmultipath: check udev_device_get_* return value to avoid
+ segfault
+
+The udev_device_get_* function may return NULL, and it will be
+deregerenced in str* and sscanf func. We check the return value
+to avoid segfault. Fix all.
+
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+Signed-off-by:Lixiaokeng<lixiaokeng@huawei.com>
+Signed-off-by: Zhiqiang Liu <liuzhiqiang26@huawei.com>
+Signed-off-by: Linfeilong <linfeilong@huawei.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/configure.c    |  4 +++-
+ libmultipath/discovery.c    |  9 +++++++--
+ libmultipath/foreign/nvme.c | 10 +++++++---
+ 3 files changed, 17 insertions(+), 6 deletions(-)
+
+diff --git a/libmultipath/configure.c b/libmultipath/configure.c
+index 2e8f34f9..a6893d8d 100644
+--- a/libmultipath/configure.c
++++ b/libmultipath/configure.c
+@@ -511,6 +511,7 @@ static void trigger_partitions_udev_change(struct udev_device *dev,
+ {
+ 	struct udev_enumerate *part_enum;
+ 	struct udev_list_entry *item;
++	const char *devtype;
+ 
+ 	part_enum = udev_enumerate_new(udev);
+ 	if (!part_enum)
+@@ -531,7 +532,8 @@ static void trigger_partitions_udev_change(struct udev_device *dev,
+ 		if (!part)
+ 			continue;
+ 
+-		if (!strcmp("partition", udev_device_get_devtype(part))) {
++		devtype = udev_device_get_devtype(part);
++		if (devtype && !strcmp("partition", devtype)) {
+ 			condlog(4, "%s: triggering %s event for %s", __func__,
+ 				action, syspath);
+ 			sysfs_attr_set_value(part, "uevent", action, len);
+diff --git a/libmultipath/discovery.c b/libmultipath/discovery.c
+index a328aafa..74abf34d 100644
+--- a/libmultipath/discovery.c
++++ b/libmultipath/discovery.c
+@@ -353,7 +353,7 @@ sysfs_get_tgt_nodename(struct path *pp, char *node)
+ 		tgtdev = udev_device_get_parent(parent);
+ 		while (tgtdev) {
+ 			tgtname = udev_device_get_sysname(tgtdev);
+-			if (sscanf(tgtname, "end_device-%d:%d",
++			if (tgtname && sscanf(tgtname, "end_device-%d:%d",
+ 				   &host, &tgtid) == 2)
+ 				break;
+ 			tgtdev = udev_device_get_parent(tgtdev);
+@@ -386,7 +386,7 @@ sysfs_get_tgt_nodename(struct path *pp, char *node)
+ 	/* Check for FibreChannel */
+ 	tgtdev = udev_device_get_parent(parent);
+ 	value = udev_device_get_sysname(tgtdev);
+-	if (sscanf(value, "rport-%d:%d-%d",
++	if (value && sscanf(value, "rport-%d:%d-%d",
+ 		   &host, &channel, &tgtid) == 3) {
+ 		tgtdev = udev_device_new_from_subsystem_sysname(udev,
+ 				"fc_remote_ports", value);
+@@ -516,6 +516,9 @@ int sysfs_get_host_pci_name(const struct path *pp, char *pci_name)
+ 		 */
+ 		value = udev_device_get_sysname(parent);
+ 
++		if (!value)
++			return 1;
++
+ 		strncpy(pci_name, value, SLOT_NAME_SIZE);
+ 		udev_device_unref(hostdev);
+ 		return 0;
+@@ -1518,6 +1521,8 @@ ccw_sysfs_pathinfo (struct path * pp, vector hwtable)
+ 	 * host / bus / target / lun
+ 	 */
+ 	attr_path = udev_device_get_sysname(parent);
++	if (!attr_path)
++		return PATHINFO_FAILED;
+ 	pp->sg_id.lun = 0;
+ 	if (sscanf(attr_path, "%i.%i.%x",
+ 		   &pp->sg_id.host_no,
+diff --git a/libmultipath/foreign/nvme.c b/libmultipath/foreign/nvme.c
+index 09cdddf0..5feb1e95 100644
+--- a/libmultipath/foreign/nvme.c
++++ b/libmultipath/foreign/nvme.c
+@@ -482,6 +482,7 @@ _find_path_by_syspath(struct nvme_map *map, const char *syspath)
+ 	struct nvme_pathgroup *pg;
+ 	char real[PATH_MAX];
+ 	const char *ppath;
++	const char *psyspath;
+ 	int i;
+ 
+ 	ppath = realpath(syspath, real);
+@@ -493,8 +494,8 @@ _find_path_by_syspath(struct nvme_map *map, const char *syspath)
+ 	vector_foreach_slot(&map->pgvec, pg, i) {
+ 		struct nvme_path *path = nvme_pg_to_path(pg);
+ 
+-		if (!strcmp(ppath,
+-			    udev_device_get_syspath(path->udev)))
++		psyspath = udev_device_get_syspath(path->udev);
++		if (psyspath && !strcmp(ppath, psyspath))
+ 			return path;
+ 	}
+ 	condlog(4, "%s: %s: %s not found", __func__, THIS, ppath);
+@@ -538,6 +539,7 @@ struct udev_device *get_ctrl_blkdev(const struct context *ctx,
+ 	struct udev_list_entry *item;
+ 	struct udev_device *blkdev = NULL;
+ 	struct udev_enumerate *enm = udev_enumerate_new(ctx->udev);
++	const char *devtype;
+ 
+ 	if (enm == NULL)
+ 		return NULL;
+@@ -562,7 +564,9 @@ struct udev_device *get_ctrl_blkdev(const struct context *ctx,
+ 					   udev_list_entry_get_name(item));
+ 		if (tmp == NULL)
+ 			continue;
+-		if (!strcmp(udev_device_get_devtype(tmp), "disk")) {
++
++		devtype = udev_device_get_devtype(tmp);
++		if (devtype && !strcmp(devtype, "disk")) {
+ 			blkdev = tmp;
+ 			break;
+ 		} else
+-- 
+2.17.2
+

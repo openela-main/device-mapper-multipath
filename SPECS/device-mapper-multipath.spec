@@ -1,6 +1,6 @@
 Name:    device-mapper-multipath
 Version: 0.8.7
-Release: 20%{?dist}
+Release: 22%{?dist}
 Summary: Tools to manage multipath devices using device-mapper
 License: GPLv2
 URL:     http://christophe.varoqui.free.fr/
@@ -94,6 +94,13 @@ Patch0081: 0081-libmultipath-cleanup-ACT_CREATE-code-in-select_actio.patch
 Patch0082: 0082-libmultipath-keep-renames-from-stopping-other-multip.patch
 Patch0083: 0083-multipath.rules-fix-smart-bug-with-failed-valid-path.patch
 Patch0084: 0084-libmultipath-limit-paths-that-can-get-wwid-from-envi.patch
+Patch0085: 0085-multipathd-make-pr-registration-consistent.patch
+Patch0086: 0086-libmultipath-make-prflag-an-enum.patch
+Patch0087: 0087-multipathd-handle-no-active-paths-in-update_map_pr.patch
+Patch0088: 0088-libmpathpersist-fix-resource-leak-in-update_map_pr.patch
+Patch0089: 0089-RH-Add-mpathcleanup.patch
+Patch0090: 0090-RH-make-listing-return-an-error-if-the-config-file-i.patch
+
 
 
 # runtime
@@ -228,6 +235,7 @@ fi
 %{_sbindir}/multipath
 %{_sbindir}/multipathd
 %{_sbindir}/mpathconf
+%{_sbindir}/mpathcleanup
 %{_sbindir}/mpathpersist
 %{_unitdir}/multipathd.service
 %{_unitdir}/multipathd.socket
@@ -295,6 +303,21 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
+* Fri Jul 28 2023 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-22
+- Add 0089-RH-Add-mpathcleanup.patch
+  * Fixes RHEL-782
+- Add 0090-RH-make-listing-return-an-error-if-the-config-file-i.patch
+- Install mpathcleanup
+  * Fixes RHEL-781
+- Resolves: #781, #782
+
+* Tue Mar 14 2023 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-21
+- Add 0085-multipathd-make-pr-registration-consistent.patch
+- Add 0086-libmultipath-make-prflag-an-enum.patch
+- Add 0087-multipathd-handle-no-active-paths-in-update_map_pr.patch
+- Add 0088-libmpathpersist-fix-resource-leak-in-update_map_pr.patch
+- Resolves: bz #2164869
+
 * Thu Feb  9 2023 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-20
 - Add 0083-multipath.rules-fix-smart-bug-with-failed-valid-path.patch
 - Add 0084-libmultipath-limit-paths-that-can-get-wwid-from-envi.patch

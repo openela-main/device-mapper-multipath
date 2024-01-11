@@ -1,0 +1,215 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Wilck <mwilck@suse.com>
+Date: Wed, 16 Sep 2020 22:22:36 +0200
+Subject: [PATCH] libmultipath: copy mpp->hwe from pp->hwe
+
+Since f0462f0 ("libmultipath: use vector for for pp->hwe and mp->hwe"),
+we've been trying to fix issues caused by paths getting freed and mpp->hwe
+dangling. This approach couldn't work because we need mpp->hwe to persist,
+even if all paths are removed from the map. Before f0462f0, a simple
+assignment worked, because the lifetime of the hwe wasn't bound to the
+path. But now, we need to copy the vector. It turns out that we need to set
+mpp->hwe only in two places, add_map_with_path() and setup_map(), and
+that the code is simplified overall.
+
+Even now, it can happen that a map is added with add_map_without_paths(),
+and has no paths. In that case, calling do_set_from_hwe() with a NULL
+pointer is not a bug, so remove the message.
+
+Fixes: f0462f0 ("libmultipath: use vector for for pp->hwe and mp->hwe")
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/configure.c   |  8 ++++++++
+ libmultipath/propsel.c     |  2 +-
+ libmultipath/structs.c     | 15 ++++++++++++++
+ libmultipath/structs.h     |  1 +
+ libmultipath/structs_vec.c | 41 +++++++++++++++++++-------------------
+ multipathd/main.c          | 10 ----------
+ 6 files changed, 45 insertions(+), 32 deletions(-)
+
+diff --git a/libmultipath/configure.c b/libmultipath/configure.c
+index c341793c..6e06fea2 100644
+--- a/libmultipath/configure.c
++++ b/libmultipath/configure.c
+@@ -324,6 +324,14 @@ int setup_map(struct multipath *mpp, char *params, int params_size,
+ 	if (mpp->disable_queueing && VECTOR_SIZE(mpp->paths) != 0)
+ 		mpp->disable_queueing = 0;
+ 
++	/*
++	 * If this map was created with add_map_without_path(),
++	 * mpp->hwe might not be set yet.
++	 */
++	if (!mpp->hwe)
++		extract_hwe_from_path(mpp);
++
++
+ 	/*
+ 	 * properties selectors
+ 	 *
+diff --git a/libmultipath/propsel.c b/libmultipath/propsel.c
+index 3f119dd9..bc5c27ab 100644
+--- a/libmultipath/propsel.c
++++ b/libmultipath/propsel.c
+@@ -66,7 +66,7 @@ do {									\
+ 	__do_set_from_vec(struct hwentry, var, (src)->hwe, dest)
+ 
+ #define do_set_from_hwe(var, src, dest, msg)				\
+-	if (__do_set_from_hwe(var, src, dest)) {			\
++	if (src->hwe && __do_set_from_hwe(var, src, dest)) {		\
+ 		origin = msg;						\
+ 		goto out;						\
+ 	}
+diff --git a/libmultipath/structs.c b/libmultipath/structs.c
+index 7bdf9152..5bb6caf8 100644
+--- a/libmultipath/structs.c
++++ b/libmultipath/structs.c
+@@ -242,6 +242,17 @@ alloc_multipath (void)
+ 	return mpp;
+ }
+ 
++void *set_mpp_hwe(struct multipath *mpp, const struct path *pp)
++{
++	if (!mpp || !pp || !pp->hwe)
++		return NULL;
++	if (mpp->hwe)
++		return mpp->hwe;
++	mpp->hwe = vector_convert(NULL, pp->hwe,
++				  struct hwentry, identity);
++	return mpp->hwe;
++}
++
+ void free_multipath_attributes(struct multipath *mpp)
+ {
+ 	if (!mpp)
+@@ -283,6 +294,10 @@ free_multipath (struct multipath * mpp, enum free_path_mode free_paths)
+ 
+ 	free_pathvec(mpp->paths, free_paths);
+ 	free_pgvec(mpp->pg, free_paths);
++	if (mpp->hwe) {
++		vector_free(mpp->hwe);
++		mpp->hwe = NULL;
++	}
+ 	FREE_PTR(mpp->mpcontext);
+ 	FREE(mpp);
+ }
+diff --git a/libmultipath/structs.h b/libmultipath/structs.h
+index 9130efb5..44980b4e 100644
+--- a/libmultipath/structs.h
++++ b/libmultipath/structs.h
+@@ -499,6 +499,7 @@ struct host_group {
+ struct path * alloc_path (void);
+ struct pathgroup * alloc_pathgroup (void);
+ struct multipath * alloc_multipath (void);
++void *set_mpp_hwe(struct multipath *mpp, const struct path *pp);
+ void free_path (struct path *);
+ void free_pathvec (vector vec, enum free_path_mode free_paths);
+ void free_pathgroup (struct pathgroup * pgp, enum free_path_mode free_paths);
+diff --git a/libmultipath/structs_vec.c b/libmultipath/structs_vec.c
+index 24ac022e..9613252f 100644
+--- a/libmultipath/structs_vec.c
++++ b/libmultipath/structs_vec.c
+@@ -180,24 +180,24 @@ extract_hwe_from_path(struct multipath * mpp)
+ 	if (mpp->hwe || !mpp->paths)
+ 		return;
+ 
+-	condlog(3, "%s: searching paths for valid hwe", mpp->alias);
++	condlog(4, "%s: searching paths for valid hwe", mpp->alias);
+ 	/* doing this in two passes seems like paranoia to me */
+ 	vector_foreach_slot(mpp->paths, pp, i) {
+-		if (pp->state != PATH_UP)
+-			continue;
+-		if (pp->hwe) {
+-			mpp->hwe = pp->hwe;
+-			return;
+-		}
++		if (pp->state == PATH_UP && pp->hwe)
++			goto done;
+ 	}
+ 	vector_foreach_slot(mpp->paths, pp, i) {
+-		if (pp->state == PATH_UP)
+-			continue;
+-		if (pp->hwe) {
+-			mpp->hwe = pp->hwe;
+-			return;
+-		}
++		if (pp->state != PATH_UP && pp->hwe)
++			goto done;
+ 	}
++done:
++	if (i < VECTOR_SIZE(mpp->paths))
++		(void)set_mpp_hwe(mpp, pp);
++
++	if (mpp->hwe)
++		condlog(3, "%s: got hwe from path %s", mpp->alias, pp->dev);
++	else
++		condlog(2, "%s: no hwe found", mpp->alias);
+ }
+ 
+ int
+@@ -445,9 +445,15 @@ struct multipath *add_map_with_path(struct vectors *vecs, struct path *pp,
+ 
+ 	conf = get_multipath_config();
+ 	mpp->mpe = find_mpe(conf->mptable, pp->wwid);
+-	mpp->hwe = pp->hwe;
+ 	put_multipath_config(conf);
+ 
++	/*
++	 * We need to call this before select_alias(),
++	 * because that accesses hwe properties.
++	 */
++	if (pp->hwe && !set_mpp_hwe(mpp, pp))
++		goto out;
++
+ 	strcpy(mpp->wwid, pp->wwid);
+ 	find_existing_alias(mpp, vecs);
+ 	if (select_alias(conf, mpp))
+@@ -497,12 +503,6 @@ int verify_paths(struct multipath *mpp, struct vectors *vecs)
+ 			vector_del_slot(mpp->paths, i);
+ 			i--;
+ 
+-			/* Make sure mpp->hwe doesn't point to freed memory.
+-			 * We call extract_hwe_from_path() below to restore
+-			 * mpp->hwe
+-			 */
+-			if (mpp->hwe == pp->hwe)
+-				mpp->hwe = NULL;
+ 			if ((j = find_slot(vecs->pathvec,
+ 					   (void *)pp)) != -1)
+ 				vector_del_slot(vecs->pathvec, j);
+@@ -512,7 +512,6 @@ int verify_paths(struct multipath *mpp, struct vectors *vecs)
+ 				mpp->alias, pp->dev, pp->dev_t);
+ 		}
+ 	}
+-	extract_hwe_from_path(mpp);
+ 	return count;
+ }
+ 
+diff --git a/multipathd/main.c b/multipathd/main.c
+index cd68a9d2..769dcaee 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -1198,13 +1198,6 @@ ev_remove_path (struct path *pp, struct vectors * vecs, int need_do_map)
+ 			goto fail;
+ 		}
+ 
+-		/*
+-		 * Make sure mpp->hwe doesn't point to freed memory
+-		 * We call extract_hwe_from_path() below to restore mpp->hwe
+-		 */
+-		if (mpp->hwe == pp->hwe)
+-			mpp->hwe = NULL;
+-
+ 		if ((i = find_slot(mpp->paths, (void *)pp)) != -1)
+ 			vector_del_slot(mpp->paths, i);
+ 
+@@ -1216,9 +1209,6 @@ ev_remove_path (struct path *pp, struct vectors * vecs, int need_do_map)
+ 		    flush_map_nopaths(mpp, vecs))
+ 			goto out;
+ 
+-		if (mpp->hwe == NULL)
+-			extract_hwe_from_path(mpp);
+-
+ 		if (setup_map(mpp, params, PARAMS_SIZE, vecs)) {
+ 			condlog(0, "%s: failed to setup map for"
+ 				" removal of path %s", mpp->alias, pp->dev);

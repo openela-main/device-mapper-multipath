@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 15 Jul 2021 14:48:15 -0500
+Subject: [PATCH] multipath.conf: fix typo in checker_timeout description
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipath/multipath.conf.5 | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/multipath/multipath.conf.5 b/multipath/multipath.conf.5
+index 6da15aad..0c04c7e4 100644
+--- a/multipath/multipath.conf.5
++++ b/multipath/multipath.conf.5
+@@ -638,7 +638,7 @@ Specify the timeout to use for path checkers and prioritizers, in seconds.
+ Only prioritizers that issue scsi commands use checker_timeout. Checkers
+ that support an asynchronous mode (\fItur\fR and \fIdirectio\fR), will
+ return shortly after being called by multipathd, regardless of whether the
+-storage array responds. If the storage array hasn't responded, mulitpathd will
++storage array responds. If the storage array hasn't responded, multipathd will
+ check for a response every second, until \fIchecker_timeout\fR seconds have
+ elapsed.
+ .RS

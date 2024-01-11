@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Luca BRUNO <luca.bruno@coreos.com>
+Date: Fri, 24 Sep 2021 09:34:01 +0000
+Subject: [PATCH] multipathd.socket: add missing conditions from service unit
+
+Upstream Status: https://github.com/openSUSE/multipath-tools.git
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=2008101
+Conflicts: Match the conditions with RHEL-8 multipathd.service unit
+
+commit 345ccf564ce7d904641bd32baf4fc53c2283d95c
+Author: Luca BRUNO <luca.bruno@coreos.com>
+Date:   Fri Sep 24 09:34:01 2021 +0000
+
+    multipathd.socket: add missing conditions from service unit
+
+    This aligns 'multipathd' socket and service units, by adding the
+    start conditions that are set on the service but not on the socket.
+    It should help avoiding situations where the socket unit ends up
+    marked as failed after hitting its retry-limit.
+
+    Fixes: https://github.com/opensvc/multipath-tools/issues/15
+    Signed-off-by: Luca BRUNO <luca.bruno@coreos.com>
+    Reviewed-by: Martin Wilck <mwilck@suse.com>
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipathd/multipathd.socket | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/multipathd/multipathd.socket b/multipathd/multipathd.socket
+index 0ed4a1f7..c62c0fc8 100644
+--- a/multipathd/multipathd.socket
++++ b/multipathd/multipathd.socket
+@@ -1,6 +1,9 @@
+ [Unit]
+ Description=multipathd control socket
+ DefaultDependencies=no
++ConditionPathExists=/etc/multipath.conf
++ConditionKernelCommandLine=!nompath
++ConditionKernelCommandLine=!multipath=off
+ Before=sockets.target
+ 
+ [Socket]

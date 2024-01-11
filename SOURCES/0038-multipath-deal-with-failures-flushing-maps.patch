@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 13 Jul 2020 15:41:15 -0500
+Subject: [PATCH] multipath: deal with failures flushing maps
+
+dm_flush_maps() was failing if there were no device-mapper devices at
+all, instead of returning success, since there is nothing to do.
+
+delegate_to_multipathd() was returning success, even if the multipathd
+command failed. Also, if the command was set to fail with NOT_DELEGATED,
+it shouldn't print any errors, since multipath will try to issue to
+command itself.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/devmapper.c | 2 +-
+ multipath/main.c         | 9 ++++++---
+ 2 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/libmultipath/devmapper.c b/libmultipath/devmapper.c
+index 91ff0b3d..3f70e576 100644
+--- a/libmultipath/devmapper.c
++++ b/libmultipath/devmapper.c
+@@ -970,10 +970,10 @@ int dm_flush_maps (int need_suspend, int retries)
+ 	if (!(names = dm_task_get_names (dmt)))
+ 		goto out;
+ 
++	r = 0;
+ 	if (!names->dev)
+ 		goto out;
+ 
+-	r = 0;
+ 	do {
+ 		if (need_suspend)
+ 			r |= dm_suspend_and_flush_map(names->name, retries);
+diff --git a/multipath/main.c b/multipath/main.c
+index 3c3d2398..607cada2 100644
+--- a/multipath/main.c
++++ b/multipath/main.c
+@@ -869,9 +869,12 @@ int delegate_to_multipathd(enum mpath_cmds cmd,
+ 		goto out;
+ 	}
+ 
+-	if (reply != NULL && *reply != '\0' && strcmp(reply, "ok\n"))
+-		printf("%s", reply);
+-	r = DELEGATE_OK;
++	if (reply != NULL && *reply != '\0') {
++		if (strcmp(reply, "fail\n"))
++			r = DELEGATE_OK;
++		if (r != NOT_DELEGATED && strcmp(reply, "ok\n"))
++			printf("%s", reply);
++	}
+ 
+ out:
+ 	FREE(reply);
+-- 
+2.17.2
+

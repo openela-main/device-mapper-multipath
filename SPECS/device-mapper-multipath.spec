@@ -1,6 +1,6 @@
 Name:    device-mapper-multipath
 Version: 0.8.7
-Release: 22%{?dist}
+Release: 27%{?dist}
 Summary: Tools to manage multipath devices using device-mapper
 License: GPLv2
 URL:     http://christophe.varoqui.free.fr/
@@ -100,7 +100,23 @@ Patch0087: 0087-multipathd-handle-no-active-paths-in-update_map_pr.patch
 Patch0088: 0088-libmpathpersist-fix-resource-leak-in-update_map_pr.patch
 Patch0089: 0089-RH-Add-mpathcleanup.patch
 Patch0090: 0090-RH-make-listing-return-an-error-if-the-config-file-i.patch
-
+Patch0091: 0091-multipathd-Added-support-to-handle-FPIN-Li-events-fo.patch
+Patch0092: 0092-multipath-tools-add-HPE-Alletra-9000-NVMe-to-hardwar.patch
+Patch0093: 0093-RH-multipath-add-mpathcleanup-man-page.patch
+Patch0094: 0094-libmultipath-Add-max_retries-config-option.patch
+Patch0095: 0095-libmutipath-Retain-device-size-if-sysfs_get_size-fai.patch
+Patch0096: 0096-multipathd-check-and-update-all-paths-when-in-cli_re.patch
+Patch0097: 0097-multipathd-move-post-reloading-commands-into-resize_.patch
+Patch0098: 0098-multipathd-move-resize_map-to-multipathd-main.c.patch
+Patch0099: 0099-multipathd-Add-auto_resize-config-option.patch
+Patch0100: 0100-libmultipath-avoid-temporarily-enabling-queueing-on-.patch
+Patch0101: 0101-multipathd-Make-sure-to-disable-queueing-if-recovery.patch
+Patch0102: 0102-multipathd-remove-nopath-flushing-code-from-flush_ma.patch
+Patch0103: 0103-multipathd-make-flush_map-delete-maps-like-the-multi.patch
+Patch0104: 0104-multipathd-disable-queueing-when-removing-unknown-ma.patch
+Patch0105: 0105-multipathd-fix-null-pointer-dereference-in-uev_updat.patch
+Patch0106: 0106-multipathd-fix-auto-resize-configuration.patch
+Patch0107: 0107-libmultipath-fix-displaying-auto_resize-config-setti.patch
 
 
 # runtime
@@ -243,6 +259,7 @@ fi
 %{_mandir}/man8/multipath.8.gz
 %{_mandir}/man8/multipathd.8.gz
 %{_mandir}/man8/mpathconf.8.gz
+%{_mandir}/man8/mpathcleanup.8.gz
 %{_mandir}/man8/mpathpersist.8.gz
 %config %{_udevrulesdir}/62-multipath.rules
 %config %{_udevrulesdir}/11-dm-mpath.rules
@@ -303,6 +320,56 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
+* Fri Jan 26 2024 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-27
+- Add 0105-multipathd-fix-null-pointer-dereference-in-uev_updat.patch
+- Add 0106-multipathd-fix-auto-resize-configuration.patch
+- Add 0107-libmultipath-fix-displaying-auto_resize-config-setti.patch
+  * Fixes RHEL-986 ("Add option to allow multipathd to detect device
+    resizes and autoresize.")
+- Resolves: RHEL-986
+
+* Wed Jan  3 2024 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-26
+- Add 0100-libmultipath-avoid-temporarily-enabling-queueing-on-.patch
+- Add 0101-multipathd-Make-sure-to-disable-queueing-if-recovery.patch
+  * Fixes RHEL-17234 ("RHEL9 dm-multipath no_path_retry [retry number] is
+    undone if paths are later lost for an open map.")
+- Add 0102-multipathd-remove-nopath-flushing-code-from-flush_ma.patch
+- Add 0103-multipathd-make-flush_map-delete-maps-like-the-multi.patch
+- Add 0104-multipathd-disable-queueing-when-removing-unknown-ma.patch
+  * Fixes RHEL-4998 ("When remove external lun from host, rescan lun status
+    will cause the OS hang and no response")
+- Resolves: RHEL-4998
+- Resolves: RHEL-17234
+
+* Mon Nov 20 2023 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-25
+- Add 0094-libmultipath-Add-max_retries-config-option.patch
+  * Fixes RHEL-1729 ("Allow multipathd to set the max_retries of the
+    scsi_device for paths")
+- Add 0095-libmutipath-Retain-device-size-if-sysfs_get_size-fai.patch
+- Add 0096-multipathd-check-and-update-all-paths-when-in-cli_re.patch
+- Add 0097-multipathd-move-post-reloading-commands-into-resize_.patch
+- Add 0098-multipathd-move-resize_map-to-multipathd-main.c.patch
+- Add 0099-multipathd-Add-auto_resize-config-option.patch
+  * Fixes RHEL-986 ("Add option to allow multipathd to detect device
+    resizes and autoresize.")
+- Resolves: RHEL-986
+- Resolves: RHEL-1729
+
+* Fri Nov  3 2023 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-24
+- Add 0093-RH-multipath-add-mpathcleanup-man-page.patch
+  * Fixes RHEL-1266 ("There is no man page for mpathcleanup")
+- Resolves: RHEL-1266
+
+* Wed Nov  1 2023 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-23
+- Add 0091-multipathd-Added-support-to-handle-FPIN-Li-events-fo.patch
+  * Fixes RHEL-6678 (Add support in multipathd for NVMe to listen for FPIN-Li
+    events and mark effected paths as marginal)
+- Add 0092-multipath-tools-add-HPE-Alletra-9000-NVMe-to-hardwar.patch
+  * Fixes RHEL-1830 (Changes to Arcus NVMeoFC multipath.conf settings for RHEL
+    9.x to be included in kernel by default)
+- Resolves: RHEL-6678
+- Resolves: RHEL-1830
+
 * Fri Jul 28 2023 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-22
 - Add 0089-RH-Add-mpathcleanup.patch
   * Fixes RHEL-782

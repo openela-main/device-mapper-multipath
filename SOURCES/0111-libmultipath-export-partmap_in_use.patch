@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 25 Apr 2024 19:35:13 -0400
+Subject: [PATCH] libmultipath: export partmap_in_use
+
+A future commit will make use of this function
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/devmapper.c          | 2 +-
+ libmultipath/devmapper.h          | 1 +
+ libmultipath/libmultipath.version | 5 +++++
+ 3 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/libmultipath/devmapper.c b/libmultipath/devmapper.c
+index 5711f0ee..4a66e2c4 100644
+--- a/libmultipath/devmapper.c
++++ b/libmultipath/devmapper.c
+@@ -1028,7 +1028,7 @@ has_partmap(const char *name __attribute__((unused)),
+ 	return 1;
+ }
+ 
+-static int
++int
+ partmap_in_use(const char *name, void *data)
+ {
+ 	int part_count, *ret_count = (int *)data;
+diff --git a/libmultipath/devmapper.h b/libmultipath/devmapper.h
+index 41b8c31d..88e0b114 100644
+--- a/libmultipath/devmapper.h
++++ b/libmultipath/devmapper.h
+@@ -48,6 +48,7 @@ int dm_get_map(const char *, unsigned long long *, char **);
+ int dm_get_status(const char *, char **);
+ int dm_type(const char *, char *);
+ int dm_is_mpath(const char *);
++int partmap_in_use(const char *name, void *data);
+ int _dm_flush_map (const char *, int, int, int, int);
+ int dm_flush_map_nopaths(const char * mapname, int deferred_remove);
+ #define dm_flush_map(mapname) _dm_flush_map(mapname, 1, 0, 0, 0)
+diff --git a/libmultipath/libmultipath.version b/libmultipath/libmultipath.version
+index 1d018eab..40d9246d 100644
+--- a/libmultipath/libmultipath.version
++++ b/libmultipath/libmultipath.version
+@@ -302,3 +302,8 @@ LIBMULTIPATH_9.1.2 {
+ global:
+ 	cleanup_mutex;
+ } LIBMULTIPATH_9.1.1;
++
++LIBMULTIPATH_9.1.3 {
++global:
++	partmap_in_use;
++} LIBMULTIPATH_9.1.2;

@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Fri, 10 May 2024 15:36:10 -0400
+Subject: [PATCH] libmultipath: change the vend/prod/rev printing
+
+The %s multipath and path wildcards both say they print the device
+vend/prod/rev string, but neither of them do. The multipath wildcards
+already provide a way to print the revision string and the %s wildcard
+is used in the multipath -l output, so leave the wildcard output alone,
+and change the description to only mention the vendor and product. There
+is no other way to print the revision by path, and the path %s wildcard
+is only used in the verbose multipath output, so make it actually print
+the revision. Also check for unset strings, and print "##" instead of
+nothing.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/print.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/libmultipath/print.c b/libmultipath/print.c
+index 535e0271..4552fd43 100644
+--- a/libmultipath/print.c
++++ b/libmultipath/print.c
+@@ -309,7 +309,7 @@ snprint_multipath_uuid (struct strbuf *buff, const struct multipath * mpp)
+ }
+ 
+ static int
+-snprint_multipath_vpr (struct strbuf *buff, const struct multipath * mpp)
++snprint_multipath_vp (struct strbuf *buff, const struct multipath * mpp)
+ {
+ 	struct pathgroup * pgp;
+ 	struct path * pp;
+@@ -511,7 +511,10 @@ snprint_dm_path_state (struct strbuf *buff, const struct path * pp)
+ static int
+ snprint_vpr (struct strbuf *buff, const struct path * pp)
+ {
+-	return print_strbuf(buff, "%s,%s", pp->vendor_id, pp->product_id);
++	return print_strbuf(buff, "%s,%s,%s",
++			    strlen(pp->vendor_id) ? pp->vendor_id : "##",
++			    strlen(pp->product_id) ? pp->product_id : "##",
++			    strlen(pp->rev) ? pp->rev : "##");
+ }
+ 
+ static int
+@@ -743,7 +746,7 @@ struct multipath_data mpd[] = {
+ 	{'2', "map_loads",     0, snprint_map_loads},
+ 	{'3', "total_q_time",  0, snprint_total_q_time},
+ 	{'4', "q_timeouts",    0, snprint_q_timeouts},
+-	{'s', "vend/prod/rev", 0, snprint_multipath_vpr},
++	{'s', "vend/prod",     0, snprint_multipath_vp},
+ 	{'v', "vend",          0, snprint_multipath_vend},
+ 	{'p', "prod",          0, snprint_multipath_prod},
+ 	{'e', "rev",           0, snprint_multipath_rev},

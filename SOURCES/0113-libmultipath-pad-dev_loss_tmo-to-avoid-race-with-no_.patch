@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 25 Apr 2024 19:35:16 -0400
+Subject: [PATCH] libmultipath: pad dev_loss_tmo to avoid race with
+ no_path_retry
+
+Currently multipath makes sure that dev_loss_tmo is at least as long as
+the configured no path queueing time. The goal is to make sure that path
+devices aren't removed while the multipath device is still queueing in
+hopes that they will become usable again.
+
+This is racy. Multipathd may take longer to check the paths than
+configured. If strict_timing isn't set, it will definitely take longer.
+To account for this, pad the minimum dev_loss_tmo value by five seconds
+(one default checker interval) plus one second per minute of no path
+queueing time.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/discovery.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/libmultipath/discovery.c b/libmultipath/discovery.c
+index ae7eb7e6..b24594cd 100644
+--- a/libmultipath/discovery.c
++++ b/libmultipath/discovery.c
+@@ -884,6 +884,11 @@ sysfs_set_scsi_tmo (struct config *conf, struct multipath *mpp)
+ 		uint64_t no_path_retry_tmo =
+ 			(uint64_t)mpp->no_path_retry * conf->checkint;
+ 
++		/* pad no_path_retry_tmo by one standard check interval
++		 * plus one second per minute to account for timing
++		 * issues with the rechecks */
++		no_path_retry_tmo += no_path_retry_tmo / 60 + DEFAULT_CHECKINT;
++
+ 		if (no_path_retry_tmo > MAX_DEV_LOSS_TMO)
+ 			min_dev_loss = MAX_DEV_LOSS_TMO;
+ 		else

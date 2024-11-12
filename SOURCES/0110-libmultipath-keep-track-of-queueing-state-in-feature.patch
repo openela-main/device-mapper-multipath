@@ -1,0 +1,194 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 19 Dec 2023 17:51:50 -0500
+Subject: [PATCH] libmultipath: keep track of queueing state in features
+
+Make multipathd update mpp->features when in enables or disables
+queuing. This patch handles all the cases except failed removes by
+dm_suspend_and_flush_map(), which is never called by multipathd.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmultipath/configure.c   |  4 +---
+ libmultipath/devmapper.c   | 23 +++++++++++++++++++----
+ libmultipath/devmapper.h   |  2 +-
+ libmultipath/structs_vec.c | 10 +++++-----
+ multipathd/main.c          |  8 ++++----
+ 5 files changed, 30 insertions(+), 17 deletions(-)
+
+diff --git a/libmultipath/configure.c b/libmultipath/configure.c
+index bbdbb8ca..71acb968 100644
+--- a/libmultipath/configure.c
++++ b/libmultipath/configure.c
+@@ -1279,9 +1279,7 @@ int coalesce_paths (struct vectors *vecs, vector mpvec, char *refwwid,
+ 			    mpp->no_path_retry != NO_PATH_RETRY_FAIL)
+ 				condlog(3, "%s: multipathd not running, unset "
+ 					"queue_if_no_path feature", mpp->alias);
+-			if (!dm_queue_if_no_path(mpp->alias, 0))
+-				remove_feature(&mpp->features,
+-					       "queue_if_no_path");
++			dm_queue_if_no_path(mpp, 0);
+ 		}
+ 
+ 		if (!is_daemon && mpp->action != ACT_NOTHING)
+diff --git a/libmultipath/devmapper.c b/libmultipath/devmapper.c
+index f9de3358..5711f0ee 100644
+--- a/libmultipath/devmapper.c
++++ b/libmultipath/devmapper.c
+@@ -57,6 +57,7 @@ static int dm_cancel_remove_partmaps(const char * mapname);
+ static int do_foreach_partmaps(const char * mapname,
+ 			       int (*partmap_func)(const char *, void *),
+ 			       void *data);
++static int _dm_queue_if_no_path(const char *mapname, int enable);
+ 
+ #ifndef LIBDM_API_COOKIE
+ static inline int dm_task_set_cookie(struct dm_task *dmt, uint32_t *c, int a)
+@@ -1072,7 +1073,7 @@ int _dm_flush_map (const char * mapname, int need_sync, int deferred_remove,
+ 	if (need_suspend &&
+ 	    dm_get_map(mapname, &mapsize, &params) == DMP_OK &&
+ 	    strstr(params, "queue_if_no_path")) {
+-		if (!dm_queue_if_no_path(mapname, 0))
++		if (!_dm_queue_if_no_path(mapname, 0))
+ 			queue_if_no_path = 1;
+ 		else
+ 			/* Leave queue_if_no_path alone if unset failed */
+@@ -1121,7 +1122,7 @@ int _dm_flush_map (const char * mapname, int need_sync, int deferred_remove,
+ 	} while (retries-- > 0);
+ 
+ 	if (queue_if_no_path == 1)
+-		dm_queue_if_no_path(mapname, 1);
++		_dm_queue_if_no_path(mapname, 1);
+ 
+ 	return 1;
+ }
+@@ -1236,8 +1237,8 @@ dm_reinstate_path(const char * mapname, char * path)
+ 	return dm_message(mapname, message);
+ }
+ 
+-int
+-dm_queue_if_no_path(const char *mapname, int enable)
++static int
++_dm_queue_if_no_path(const char *mapname, int enable)
+ {
+ 	char *message;
+ 
+@@ -1249,6 +1250,20 @@ dm_queue_if_no_path(const char *mapname, int enable)
+ 	return dm_message(mapname, message);
+ }
+ 
++int dm_queue_if_no_path(struct multipath *mpp, int enable)
++{
++	int r;
++	static const char no_path_retry[] = "queue_if_no_path";
++
++	if ((r = _dm_queue_if_no_path(mpp->alias, enable)) == 0) {
++		if (enable)
++			add_feature(&mpp->features, no_path_retry);
++		else
++			remove_feature(&mpp->features, no_path_retry);
++	}
++	return r;
++}
++
+ static int
+ dm_groupmsg (const char * msg, const char * mapname, int index)
+ {
+diff --git a/libmultipath/devmapper.h b/libmultipath/devmapper.h
+index 808da28d..41b8c31d 100644
+--- a/libmultipath/devmapper.h
++++ b/libmultipath/devmapper.h
+@@ -58,7 +58,7 @@ int dm_cancel_deferred_remove(struct multipath *mpp);
+ int dm_flush_maps (int retries);
+ int dm_fail_path(const char * mapname, char * path);
+ int dm_reinstate_path(const char * mapname, char * path);
+-int dm_queue_if_no_path(const char *mapname, int enable);
++int dm_queue_if_no_path(struct multipath *mpp, int enable);
+ int dm_switchgroup(const char * mapname, int index);
+ int dm_enablegroup(const char * mapname, int index);
+ int dm_disablegroup(const char * mapname, int index);
+diff --git a/libmultipath/structs_vec.c b/libmultipath/structs_vec.c
+index 86ad89ca..56915e96 100644
+--- a/libmultipath/structs_vec.c
++++ b/libmultipath/structs_vec.c
+@@ -579,7 +579,7 @@ static void leave_recovery_mode(struct multipath *mpp)
+ 	 */
+ 	if (recovery && (mpp->no_path_retry == NO_PATH_RETRY_QUEUE ||
+ 			 mpp->no_path_retry > 0)) {
+-		dm_queue_if_no_path(mpp->alias, 1);
++		dm_queue_if_no_path(mpp, 1);
+ 		condlog(2, "%s: queue_if_no_path enabled", mpp->alias);
+ 		condlog(1, "%s: Recovered to normal mode", mpp->alias);
+ 	}
+@@ -598,11 +598,11 @@ void __set_no_path_retry(struct multipath *mpp, bool check_features)
+ 		break;
+ 	case NO_PATH_RETRY_FAIL:
+ 		if (!check_features || is_queueing)
+-			dm_queue_if_no_path(mpp->alias, 0);
++			dm_queue_if_no_path(mpp, 0);
+ 		break;
+ 	case NO_PATH_RETRY_QUEUE:
+ 		if (!check_features || !is_queueing)
+-			dm_queue_if_no_path(mpp->alias, 1);
++			dm_queue_if_no_path(mpp, 1);
+ 		break;
+ 	default:
+ 		if (count_active_paths(mpp) > 0) {
+@@ -612,7 +612,7 @@ void __set_no_path_retry(struct multipath *mpp, bool check_features)
+ 			 */
+ 			if ((!check_features || !is_queueing) &&
+ 			    !mpp->in_recovery)
+-				dm_queue_if_no_path(mpp->alias, 1);
++				dm_queue_if_no_path(mpp, 1);
+ 			leave_recovery_mode(mpp);
+ 		} else {
+ 			/*
+@@ -623,7 +623,7 @@ void __set_no_path_retry(struct multipath *mpp, bool check_features)
+ 			 */
+ 			if ((!check_features || is_queueing) &&
+ 			    mpp->in_recovery && mpp->retry_tick == 0)
+-				dm_queue_if_no_path(mpp->alias, 0);
++				dm_queue_if_no_path(mpp, 0);
+ 			if (pathcount(mpp, PATH_PENDING) == 0)
+ 				enter_recovery_mode(mpp);
+ 		}
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 26be6dc3..74f8114c 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -502,7 +502,7 @@ flush_map_nopaths(struct multipath *mpp, struct vectors *vecs) {
+ 		mpp->no_path_retry = NO_PATH_RETRY_FAIL;
+ 		mpp->disable_queueing = 1;
+ 		mpp->stat_map_failures++;
+-		dm_queue_if_no_path(mpp->alias, 0);
++		dm_queue_if_no_path(mpp, 0);
+ 	}
+ 	r = dm_flush_map_nopaths(mpp->alias, mpp->deferred_remove);
+ 	if (r) {
+@@ -833,7 +833,7 @@ uev_remove_map (struct uevent * uev, struct vectors * vecs)
+ 		goto out;
+ 	}
+ 
+-	dm_queue_if_no_path(alias, 0);
++	dm_queue_if_no_path(mpp, 0);
+ 	remove_map_and_stop_waiter(mpp, vecs);
+ out:
+ 	lock_cleanup_pop(vecs->lock);
+@@ -2015,7 +2015,7 @@ retry_count_tick(vector mpvec)
+ 			condlog(4, "%s: Retrying.. No active path", mpp->alias);
+ 			if(--mpp->retry_tick == 0) {
+ 				mpp->stat_map_failures++;
+-				dm_queue_if_no_path(mpp->alias, 0);
++				dm_queue_if_no_path(mpp, 0);
+ 				condlog(2, "%s: Disable queueing", mpp->alias);
+ 			}
+ 		}
+@@ -3110,7 +3110,7 @@ static void cleanup_maps(struct vectors *vecs)
+ 	put_multipath_config(conf);
+ 	if (queue_without_daemon == QUE_NO_DAEMON_OFF)
+ 		vector_foreach_slot(vecs->mpvec, mpp, i)
+-			dm_queue_if_no_path(mpp->alias, 0);
++			dm_queue_if_no_path(mpp, 0);
+ 	remove_maps_and_stop_waiters(vecs);
+ 	vecs->mpvec = NULL;
+ }

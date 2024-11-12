@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 9 Apr 2024 14:09:49 -0400
+Subject: [PATCH] libmultipath: actually truncate too-large vpd page.
+
+When multipath notices that the vpd page is too large, it needs to
+actually truncate it. Also, whe calling parse_vpd_pg83() with a possibly
+truncated page, multipath needs to check that it actually has a whole
+vpd entry, before trying to use it.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/discovery.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/libmultipath/discovery.c b/libmultipath/discovery.c
+index adf8bbaa..ae7eb7e6 100644
+--- a/libmultipath/discovery.c
++++ b/libmultipath/discovery.c
+@@ -1164,7 +1164,7 @@ parse_vpd_pg83(const unsigned char *in, size_t in_len,
+ 	int vpd_type, prio = -1, naa_prio;
+ 
+ 	d = in + 4;
+-	while (d < in + in_len) {
++	while (d + 4 <= in + in_len && d + d[3] + 4 <= in + in_len) {
+ 		/* Select 'association: LUN' */
+ 		if ((d[1] & 0x30) != 0) {
+ 			d += d[3] + 4;
+@@ -1363,8 +1363,10 @@ get_vpd_sysfs (struct udev_device *parent, int pg, char * str, int maxlen)
+ 		return -ENODATA;
+ 	}
+ 	buff_len = get_unaligned_be16(&buff[2]) + 4;
+-	if (buff_len > 4096)
++	if (buff_len > 4096) {
+ 		condlog(3, "vpd pg%02x page truncated", pg);
++		buff_len = 4096;
++	}
+ 
+ 	if (pg == 0x80)
+ 		len = parse_vpd_pg80(buff, str, maxlen);

@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 9 May 2024 12:58:11 -0400
+Subject: [PATCH] multipathd: Stop double counting map failures for
+ no_path_retry > 0
+
+If no_path_retry was greater than 0, multipathd was counting a map
+failure when recovery mode was entered, and again when queueing was
+disabled. The first one is incorrect, since the map is still queueing.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/structs_vec.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/libmultipath/structs_vec.c b/libmultipath/structs_vec.c
+index 56915e96..b8e304e0 100644
+--- a/libmultipath/structs_vec.c
++++ b/libmultipath/structs_vec.c
+@@ -781,10 +781,13 @@ int verify_paths(struct multipath *mpp)
+ void update_queue_mode_del_path(struct multipath *mpp)
+ {
+ 	int active = count_active_paths(mpp);
++	bool is_queueing = mpp->features &&
++			   strstr(mpp->features, "queue_if_no_path");
+ 
+ 	if (active == 0) {
+ 		enter_recovery_mode(mpp);
+-		if (mpp->no_path_retry != NO_PATH_RETRY_QUEUE)
++		if (mpp->no_path_retry == NO_PATH_RETRY_FAIL ||
++		    (mpp->no_path_retry == NO_PATH_RETRY_UNDEF && !is_queueing))
+ 			mpp->stat_map_failures++;
+ 	}
+ 	condlog(2, "%s: remaining active paths: %d", mpp->alias, active);

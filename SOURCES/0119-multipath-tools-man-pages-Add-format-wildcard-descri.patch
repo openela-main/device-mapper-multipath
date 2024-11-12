@@ -1,0 +1,243 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Fri, 10 May 2024 20:53:33 -0400
+Subject: [PATCH] multipath-tools man pages: Add format wildcard descriptions
+
+Suggested-by: Nitin Yewale <nyewale@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipathd/multipathd.8 | 193 +++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 189 insertions(+), 4 deletions(-)
+
+diff --git a/multipathd/multipathd.8 b/multipathd/multipathd.8
+index 40a8dc6d..d834f89e 100644
+--- a/multipathd/multipathd.8
++++ b/multipathd/multipathd.8
+@@ -103,7 +103,7 @@ Show the paths that multipathd is monitoring, and their state.
+ .B list|show paths [raw] format $format
+ Show the paths that multipathd is monitoring, using a format string with path
+ format wildcards. Adding \fIraw\fR will remove the headers and alignment
+-padding from the ouput.
++padding from the output. See "Path format wildcards" below.
+ .
+ .TP
+ .B list|show path $path
+@@ -117,7 +117,8 @@ Show the multipath devices that the multipathd is monitoring.
+ .B list|show maps|multipaths [raw] format $format
+ Show the status of all multipath devices that the multipathd is monitoring,
+ using a format string with multipath format wildcards. Adding \fIraw\fR will
+-remove the headers and alignment padding from the output.
++remove the headers and alignment padding from the output. See "Multipath
++format wildcards" below.
+ .
+ .TP
+ .B list|show maps|multipaths status
+@@ -148,7 +149,7 @@ Show topology of a single multipath device specified by $map, for example
+ .B list|show map|multipath $map [raw] format $format.
+ Show the status of multipath device $map, using a format string with multipath
+ format wildcards. Adding \fIraw\fR will remove the headers and alignment
+-padding from the output.
++padding from the output. See "Multipath format wildcards" below.
+ .
+ .TP
+ .B list|show map|multipath $map json
+@@ -156,7 +157,8 @@ Show information about multipath device $map in JSON format.
+ .
+ .TP
+ .B list|show wildcards
+-Show the format wildcards used in interactive commands taking $format.
++Show the format wildcards used in interactive commands taking $format. See
++"Format Wildcards" below.
+ .
+ .TP
+ .B list|show config
+@@ -339,6 +341,189 @@ Stop multipathd.
+ .
+ .
+ .\" ----------------------------------------------------------------------------
++.SH "Format Wildcards"
++.\" ----------------------------------------------------------------------------
++.
++Multipathd commands that take a $format option require a format string. This
++string controls how a device is printed and should include format wildcards.
++When the devices are printed, these wildcards will be replaced by the
++appropriate device information. The following wildcards are supported.
++.TP
++.B Multipath format wildcards
++.RS
++.TP 12
++.B %n
++The device name.
++.TP
++.B %w
++The device WWID (uuid).
++.TP
++.B %d
++The device sysfs name (dm-<minor_nr>).
++.TP
++.B %F
++The device \fBfailback\fR setting. For deferred failbacks, it will either
++print the configured time if a deferred failback is not in progress, or
++it will show the current progress of a deferred failback.
++.TP
++.B %Q
++The device \fBno_path_retry\fR setting. If no_path_retry is set to a
++number of retires, it will either print the configured number of checker
++retries if the device is not in recovery mode, the number of seconds until
++queueing is disabled if the device is queueing in recovery mode, or \fIoff\fR
++if the device has disabled queueing.
++.TP
++.B %N
++The number of active paths for the device.
++.TP
++.B %r
++The device write-protect setting, either \fIro\fR or \fIrw\fR.
++.TP
++.B %t
++The device-mapper state of the device, either \fIsuspend\fR or \fIactive\fR.
++.TP
++.B %S
++The device size.
++.TP
++.B %f
++The device table features string.
++.TP
++.B %x
++The number of times the device has entered a state where it will fail IO.
++This is an alias for the \fB%4\fR wildcard.
++This value can be reset with the '\fIreset map $map stats\fR' command.
++.TP
++.B %h
++The device table hardware handler string.
++.TP
++.B %A
++The last action multipathd took on the device. This wildcard is for debugging
++use, as understanding its meaning requires looking at the code.
++.TP
++.B %0
++The number of times a path in the device has failed.
++This value can be reset with the '\fIreset map $map stats\fR' command.
++.TP
++.B %1
++The number of times multipathd has initiated a pathgroup switch for the device.
++This value can be reset with the '\fIreset map $map stats\fR' command.
++.TP
++.B %2
++The number of times multipathd has loaded a new table for the device.
++This value can be reset with the '\fIreset map $map stats\fR' command.
++.TP
++.B %3
++The approximate number of seconds that multipathd has spent queueing with
++no usable paths. This value can be reset with the '\fIreset map $map stats\fR'
++command.
++.TP
++.B %4
++The number of times the device has entered a state where it will fail IO.
++This is an alias for the \fB%x\fR wildcard.
++This value can be reset with the '\fIreset map $map stats\fR' command.
++.TP
++.B %s
++The vendor/product string for the device.
++.TP
++.B %v
++The array vendor string for the device.
++.TP
++.B %p
++The array product string for the device.
++.TP
++.B %e
++The array firmware revision string for the device.
++.TP
++.B %G
++The foreign library used for the device, or \fB--\fR for native device-mapper
++multipath devices.
++.TP
++.B %g
++Data from vendor specific vpd pages for the device, if any.
++.RE
++.
++.
++.TP
++.B Path format wildcards
++.RS
++.TP 12
++.B %w
++The device WWID (uuid).
++.TP
++.B %i
++The device Host:Channel:Id:Lun
++.TP
++.B %d
++The device sysfs name.
++.TP
++.B %D
++The device major:minor
++.TP
++.B %t
++The device-mapper state of the device, either \fIactive\fR or \fIfailed\fR.
++.TP
++.B %o
++Whether the device is \fIoffline\fR or \fIrunning\fR.
++.TP
++.B %T
++The multipathd path checker state of the device.
++.TP
++.B %s
++The vendor/product/revision string for the device.
++.TP
++.B %c
++The device's path checker name.
++.TP
++.B %C
++The progress towards the next path checker run on the device.
++.TP
++.B %p
++The device priority.
++.TP
++.B %S
++The device size.
++.TP
++.B %z
++The device serial number.
++.TP
++.B %M
++The device marginal state, either \fImarginal\fR or \fInormal\fR.
++.TP
++.B %m
++The multipath device that this device is a path of.
++.TP
++.B %N
++The host World Wide Node Name (WWNN) of the device.
++.TP
++.B %n
++The target World Wide Node Name (WWNN) of the device.
++.TP
++.B %R
++The host World Wide Port Name (WWPN) of the device.
++.TP
++.B %r
++The target World Wide Port Name (WWPN) of the device.
++.TP
++.B %a
++The host adapter name for the device (only SCSI devices).
++.TP
++.B %G
++The foreign library used for the device, or \fB--\fR for paths of native
++device-mapper multipath devices.
++.TP
++.B %g
++Data from vendor specific vpd pages for the device, if any.
++.TP
++.B %0
++The number of times this device has failed.
++.TP
++.B %P
++The device protocol. This output can be used for \fIprotocol\fR blacklist
++entries.
++.RE
++.
++.
++.\" ----------------------------------------------------------------------------
+ .SH "SYSTEMD INTEGRATION"
+ .\" ----------------------------------------------------------------------------
+ .

@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 9 Apr 2024 14:13:34 -0400
+Subject: [PATCH] kpartx: fix theoretical overflow in loop device name
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ kpartx/lopart.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kpartx/lopart.c b/kpartx/lopart.c
+index 9b652554..80ce1312 100644
+--- a/kpartx/lopart.c
++++ b/kpartx/lopart.c
+@@ -159,7 +159,7 @@ char *find_loop_by_file(const char *filename)
+ 
+ char *find_unused_loop_device(void)
+ {
+-	char dev[20], *next_loop_dev = NULL;
++	char dev[21], *next_loop_dev = NULL;
+ 	int fd, next_loop = 0, somedev = 0, someloop = 0, loop_known = 0;
+ 	struct stat statbuf;
+ 	struct loop_info loopinfo;

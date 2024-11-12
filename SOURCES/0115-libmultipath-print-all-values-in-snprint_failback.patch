@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Wed, 8 May 2024 19:02:30 -0400
+Subject: [PATCH] libmultipath: print all values in snprint_failback
+
+Add the missing output for manual failback and print the defferral time
+for deferred failbacks, if one isn't currently in progress.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/print.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/libmultipath/print.c b/libmultipath/print.c
+index a6e4c774..535e0271 100644
+--- a/libmultipath/print.c
++++ b/libmultipath/print.c
+@@ -199,9 +199,13 @@ snprint_failback (struct strbuf *buff, const struct multipath * mpp)
+ 		return append_strbuf_str(buff, "immediate");
+ 	if (mpp->pgfailback == -FAILBACK_FOLLOWOVER)
+ 		return append_strbuf_str(buff, "followover");
++	if (mpp->pgfailback == -FAILBACK_MANUAL)
++		return append_strbuf_str(buff, "manual");
++	if (mpp->pgfailback == FAILBACK_UNDEF)
++		return append_strbuf_str(buff, "undef");
+ 
+ 	if (!mpp->failback_tick)
+-		return append_strbuf_str(buff, "-");
++		return print_strbuf(buff, "%i", mpp->pgfailback);
+ 	else
+ 		return snprint_progress(buff, mpp->failback_tick,
+ 					mpp->pgfailback);

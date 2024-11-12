@@ -1,6 +1,6 @@
 Name:    device-mapper-multipath
 Version: 0.8.7
-Release: 27%{?dist}
+Release: 32%{?dist}
 Summary: Tools to manage multipath devices using device-mapper
 License: GPLv2
 URL:     http://christophe.varoqui.free.fr/
@@ -117,6 +117,20 @@ Patch0104: 0104-multipathd-disable-queueing-when-removing-unknown-ma.patch
 Patch0105: 0105-multipathd-fix-null-pointer-dereference-in-uev_updat.patch
 Patch0106: 0106-multipathd-fix-auto-resize-configuration.patch
 Patch0107: 0107-libmultipath-fix-displaying-auto_resize-config-setti.patch
+Patch0108: 0108-libmultipath-actually-truncate-too-large-vpd-page.patch
+Patch0109: 0109-kpartx-fix-theoretical-overflow-in-loop-device-name.patch
+Patch0110: 0110-libmultipath-keep-track-of-queueing-state-in-feature.patch
+Patch0111: 0111-libmultipath-export-partmap_in_use.patch
+Patch0112: 0112-libmultipath-change-flush_on_last_del-to-fix-a-multi.patch
+Patch0113: 0113-libmultipath-pad-dev_loss_tmo-to-avoid-race-with-no_.patch
+Patch0114: 0114-libmultipath-remove-pathgroup-wildcard-options.patch
+Patch0115: 0115-libmultipath-print-all-values-in-snprint_failback.patch
+Patch0116: 0116-multipathd-Stop-double-counting-map-failures-for-no_.patch
+Patch0117: 0117-multipath-tools-man-pages-add-missing-multipathd-com.patch
+Patch0118: 0118-libmultipath-change-the-vend-prod-rev-printing.patch
+Patch0119: 0119-multipath-tools-man-pages-Add-format-wildcard-descri.patch
+Patch0120: 0120-multipath-tools-fix-multipath-ll-bug-for-Native-NVME.patch
+Patch0121: 0121-multipathd-set-reply-length-to-zero-for-NULL-replies.patch
 
 
 # runtime
@@ -320,6 +334,48 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
+* Mon Aug  5 2024 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-32
+- Modify bindings, find_multipaths, and user_friendly_names tests
+  * Fixes RHEL-28068 & RHEL-4459
+- Resolves: RHEL-28068
+- Resolves: RHEL-44569
+
+* Tue Jul 30 2024 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-31
+- Modify multiple tests especially medium_error_scsi_debug and squelch_scsi_id
+  * Fixes RHEL-28068 & RHEL-4459
+- Resolves: RHEL-28068
+- Resolves: RHEL-44569
+
+* Tue Jul 30 2024 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-30
+- Add 0120-multipath-tools-fix-multipath-ll-bug-for-Native-NVME.patch
+  * Fixes RHEL-28068
+- Add 0121-multipathd-set-reply-length-to-zero-for-NULL-replies.patch
+  * Fixes RHEL-44569
+- Resolves: RHEL-28068
+- Resolves: RHEL-44569
+
+* Tue May 21 2024 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-29
+- Add 0110-libmultipath-keep-track-of-queueing-state-in-feature.patch
+- Add 0111-libmultipath-export-partmap_in_use.patch
+- Add 0112-libmultipath-change-flush_on_last_del-to-fix-a-multi.patch
+- Add 0113-libmultipath-pad-dev_loss_tmo-to-avoid-race-with-no_.patch
+  * Fixes RHEL-30272
+- Add 0114-libmultipath-remove-pathgroup-wildcard-options.patch
+- Add 0115-libmultipath-print-all-values-in-snprint_failback.patch
+- Add 0116-multipathd-Stop-double-counting-map-failures-for-no_.patch
+- Add 0117-multipath-tools-man-pages-add-missing-multipathd-com.patch
+- Add 0118-libmultipath-change-the-vend-prod-rev-printing.patch
+- Add 0119-multipath-tools-man-pages-Add-format-wildcard-descri.patch
+  * Fixes RHEL-8304
+- Resolves: RHEL-8304
+- Resolves: RHEL-30272
+
+* Tue Apr  9 2024 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-28
+- Add 0108-libmultipath-actually-truncate-too-large-vpd-page.patch
+- Add 0109-kpartx-fix-theoretical-overflow-in-loop-device-name.patch
+  * Fixes RHEL-31793 ("RHEL SAST Automation: address (selected) true positives")
+- Resolves: RHEL-31793
+
 * Fri Jan 26 2024 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-27
 - Add 0105-multipathd-fix-null-pointer-dereference-in-uev_updat.patch
 - Add 0106-multipathd-fix-auto-resize-configuration.patch

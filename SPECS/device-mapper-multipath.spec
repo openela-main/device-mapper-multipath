@@ -1,7 +1,7 @@
 Summary: Tools to manage multipath devices using device-mapper
 Name: device-mapper-multipath
 Version: 0.8.4
-Release: 41%{?dist}
+Release: 42%{?dist}
 License: GPLv2
 Group: System Environment/Base
 URL: http://christophe.varoqui.free.fr/
@@ -148,6 +148,7 @@ Patch00134: 0134-multipathd-handle-no-active-paths-in-update_map_pr.patch
 Patch00135: 0135-libmpathpersist-fix-resource-leak-in-update_map_pr.patch
 Patch00136: 0136-multipathd-Added-support-to-handle-FPIN-Li-events-fo.patch
 Patch00137: 0137-multipathd-Make-sure-to-disable-queueing-if-recovery.patch
+Patch00138: 0138-libmultipath-foreign-fix-memory-leak-in-nvme-foreign.patch
 
 # runtime
 Requires: %{name}-libs = %{version}-%{release}
@@ -352,6 +353,10 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
+* Thu Jan  9 2025 Benjamin Marzinski <bmarzins@redhat.com> 0.8.4-42
+- Add 0138-libmultipath-foreign-fix-memory-leak-in-nvme-foreign.patch
+- Resolves: RHEL-72573
+
 * Fri Jan  5 2024 Benjamin Marzinski <bmarzins@redhat.com> 0.8.4-41
 - Add 0137-multipathd-Make-sure-to-disable-queueing-if-recovery.patch
 - Resolves: RHEL-16563

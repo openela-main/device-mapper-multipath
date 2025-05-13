@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 6 Jan 2025 19:57:53 -0500
+Subject: [PATCH] libmultipath/foreign: fix memory leak in nvme foreign handler
+
+_find_controllers() needs to free the udev device if it doesn't get
+added to a path.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/foreign/nvme.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/libmultipath/foreign/nvme.c b/libmultipath/foreign/nvme.c
+index 76b57283..63ab2c62 100644
+--- a/libmultipath/foreign/nvme.c
++++ b/libmultipath/foreign/nvme.c
+@@ -707,6 +707,7 @@ static void _find_controllers(struct context *ctx, struct nvme_map *map)
+ 		path = _find_path_by_syspath(map,
+ 					     udev_device_get_syspath(udev));
+ 		if (path != NULL) {
++			udev_device_unref(udev);
+ 			path->seen = true;
+ 			condlog(4, "%s: %s already known",
+ 				__func__, fn);
+@@ -714,8 +715,10 @@ static void _find_controllers(struct context *ctx, struct nvme_map *map)
+ 		}
+ 
+ 		path = calloc(1, sizeof(*path));
+-		if (path == NULL)
++		if (path == NULL) {
++			udev_device_unref(udev);
+ 			continue;
++		}
+ 
+ 		path->gen.ops = &nvme_path_ops;
+ 		path->udev = udev;

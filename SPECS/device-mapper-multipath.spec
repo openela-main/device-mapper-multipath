@@ -1,6 +1,6 @@
 Name:    device-mapper-multipath
 Version: 0.8.7
-Release: 32%{?dist}
+Release: 35%{?dist}
 Summary: Tools to manage multipath devices using device-mapper
 License: GPLv2
 URL:     http://christophe.varoqui.free.fr/
@@ -131,6 +131,12 @@ Patch0118: 0118-libmultipath-change-the-vend-prod-rev-printing.patch
 Patch0119: 0119-multipath-tools-man-pages-Add-format-wildcard-descri.patch
 Patch0120: 0120-multipath-tools-fix-multipath-ll-bug-for-Native-NVME.patch
 Patch0121: 0121-multipathd-set-reply-length-to-zero-for-NULL-replies.patch
+Patch0122: 0122-libmultipath-fix-ontap-prioritizer-snprintf-limits.patch
+Patch0123: 0123-multipathd-checker-port_state-before-setting-it.patch
+Patch0124: 0124-libmultipath-add-missing-assert-to-checkers.c.patch
+Patch0125: 0125-libmultipath-foreign-fix-memory-leak-in-nvme-foreign.patch
+Patch0126: 0126-libmultipath-export-udev-pthread-cleanup-functions.patch
+Patch0127: 0127-multipathd-set-rport-port_state-to-marginal-for-NVMe.patch
 
 
 # runtime
@@ -334,6 +340,24 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
+* Thu Jan  9 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-35
+- Add 0124-libmultipath-add-missing-assert-to-checkers.c.patch
+- Add 0125-libmultipath-foreign-fix-memory-leak-in-nvme-foreign.patch
+  * Fixes RHEL-73413
+- Add 0126-libmultipath-export-udev-pthread-cleanup-functions.patch
+- Add 0127-multipathd-set-rport-port_state-to-marginal-for-NVMe.patch
+  * Fixes RHEL-67472
+- Resolves: RHEL-73413
+- Resolves: RHEL-67472
+
+* Tue Sep 17 2024 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-34
+- Add 0123-multipathd-checker-port_state-before-setting-it.patch
+- Resolves: RHEL-59157
+
+* Fri Sep 13 2024 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-33
+- Add 0122-libmultipath-fix-ontap-prioritizer-snprintf-limits.patch
+- Resolves: RHEL-58920
+
 * Mon Aug  5 2024 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-32
 - Modify bindings, find_multipaths, and user_friendly_names tests
   * Fixes RHEL-28068 & RHEL-4459

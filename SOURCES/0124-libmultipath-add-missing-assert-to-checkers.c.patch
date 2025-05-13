@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 17 Dec 2024 23:03:39 -0500
+Subject: [PATCH] libmultipath: add missing assert to checkers.c
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/checkers.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/libmultipath/checkers.c b/libmultipath/checkers.c
+index 8039c2bf..9eb3e261 100644
+--- a/libmultipath/checkers.c
++++ b/libmultipath/checkers.c
+@@ -5,6 +5,7 @@
+ #include <sys/stat.h>
+ #include <urcu.h>
+ #include <urcu/uatomic.h>
++#include <assert.h>
+ 
+ #include "debug.h"
+ #include "checkers.h"

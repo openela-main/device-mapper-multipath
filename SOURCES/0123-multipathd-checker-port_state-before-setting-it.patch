@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 16 Sep 2024 19:29:13 -0400
+Subject: [PATCH] multipathd: checker port_state before setting it.
+
+If the rport port_state is already Marginal, trying to set it to
+Marginal causes an error like the following:
+
+multipathd[365376]: /sys/devices/pci0000:c0/0000:c0:01.1/0000:c4:00.0/host0/rport-0:0-5/fc_remote_ports/rport-0:0-5: failed to set port_state to marginal: Invalid argument
+
+To avoid causing this confusing error message, check if the port_state
+is already marginal before trying to set it.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipathd/fpin_handlers.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/multipathd/fpin_handlers.c b/multipathd/fpin_handlers.c
+index d5f7594d..c5b9785f 100644
+--- a/multipathd/fpin_handlers.c
++++ b/multipathd/fpin_handlers.c
+@@ -168,8 +168,16 @@ fpin_els_add_li_frame(struct fc_nl_event *fc_event)
+ /*Sets the rport port_state to marginal*/
+ static void fpin_set_rport_marginal(struct udev_device *rport_dev)
+ {
++	char old_value[20]; /* match kernel show_fc_rport_port_state() size */
++	static const char marginal[] = "Marginal";
++	ssize_t ret;
++
++	ret = sysfs_attr_get_value(rport_dev, "port_state",
++				   old_value, sizeof(old_value));
++	if (ret == sizeof(marginal) - 1 && strcmp(old_value, marginal) == 0)
++		return;
+ 	sysfs_attr_set_value(rport_dev, "port_state",
+-				"Marginal", strlen("Marginal"));
++			     marginal, sizeof(marginal) - 1);
+ }
+ 
+ /*Add the marginal devices info into the list and return 0 on success*/

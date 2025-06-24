@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Wilck <mwilck@suse.com>
+Date: Wed, 12 Feb 2025 20:08:28 +0100
+Subject: [PATCH] multipathd: make uxsock_listen() take a pointer to fd
+
+This prepares being able to pass multiple socket fds.
+
+Signed-off-by: Martin Wilck <mwilck@suse.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipathd/main.c   |  2 +-
+ multipathd/uxlsnr.c | 11 ++++++++---
+ multipathd/uxlsnr.h |  3 +--
+ 3 files changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 21f16b8f..6afb7154 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -1824,7 +1824,7 @@ uxlsnrloop (void * ap)
+ 	set_handler_callback(UNSETMARGINAL|MAP, cli_unset_all_marginal);
+ 
+ 	umask(077);
+-	uxsock_listen(ux_sock, ap);
++	uxsock_listen(1, &ux_sock, ap);
+ 
+ out_sock:
+ 	pthread_cleanup_pop(1); /* uxsock_cleanup */
+diff --git a/multipathd/uxlsnr.c b/multipathd/uxlsnr.c
+index 7c081799..7599291a 100644
+--- a/multipathd/uxlsnr.c
++++ b/multipathd/uxlsnr.c
+@@ -332,7 +332,7 @@ static int uxsock_trigger(char *str, char **reply, int *len,
+ /*
+  * entry point
+  */
+-void *uxsock_listen(long ux_sock, void *trigger_data)
++void *uxsock_listen(int n_socks, long *ux_sock, void *trigger_data)
+ {
+ 	int rlen;
+ 	char *inbuf;
+@@ -343,6 +343,11 @@ void *uxsock_listen(long ux_sock, void *trigger_data)
+ 	unsigned int sequence_nr = 0;
+ 	struct watch_descriptors wds = { .conf_wd = -1, .dir_wd = -1 };
+ 
++	if (n_socks != 1) {
++		condlog(0, "uxsock: no socket fds");
++		exit_daemon();
++		return NULL;
++	}
+ 	condlog(3, "uxsock: startup listener");
+ 	polls = MALLOC(max_pfds * sizeof(*polls));
+ 	if (!polls) {
+@@ -384,7 +389,7 @@ void *uxsock_listen(long ux_sock, void *trigger_data)
+ 			}
+ 		}
+ 		if (num_clients < MAX_CLIENTS) {
+-			polls[POLLFD_UX].fd = ux_sock;
++			polls[POLLFD_UX].fd = ux_sock[0];
+ 			polls[POLLFD_UX].events = POLLIN;
+ 		} else {
+ 			/*
+@@ -506,7 +511,7 @@ void *uxsock_listen(long ux_sock, void *trigger_data)
+ 
+ 		/* see if we got a new client */
+ 		if (polls[POLLFD_UX].revents & POLLIN) {
+-			new_client(ux_sock);
++			new_client(ux_sock[0]);
+ 		}
+ 
+ 		/* handle inotify events on config files */
+diff --git a/multipathd/uxlsnr.h b/multipathd/uxlsnr.h
+index 60c3a2c7..dc3857c4 100644
+--- a/multipathd/uxlsnr.h
++++ b/multipathd/uxlsnr.h
+@@ -4,7 +4,6 @@
+ #include <stdbool.h>
+ 
+ void uxsock_cleanup(void *arg);
+-void *uxsock_listen(long ux_sock,
+-		    void * trigger_data);
++void *uxsock_listen(int n_socks, long *ux_sock, void *trigger_data);
+ 
+ #endif

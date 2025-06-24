@@ -1,0 +1,157 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Wilck <mwilck@suse.com>
+Date: Fri, 14 Feb 2025 21:57:02 +0100
+Subject: [PATCH] multipath-tools: add helper mpath_fill_sockaddr__()
+
+Create a static new helper function which is used by both libmpathcmd
+and libmpathutil and fills in the socket address name from the compile-time
+default. The function is able to handle both abstract and pathname sockets,
+but more changes are needed to make the latter actually work.
+
+Signed-off-by: Martin Wilck <mwilck@suse.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ Makefile.inc                      |  2 +-
+ libmpathcmd/mpath_cmd.c           | 11 +++--------
+ libmpathcmd/mpath_fill_sockaddr.c | 30 ++++++++++++++++++++++++++++++
+ libmultipath/uxsock.c             | 15 ++++++---------
+ 4 files changed, 40 insertions(+), 18 deletions(-)
+ create mode 100644 libmpathcmd/mpath_fill_sockaddr.c
+
+diff --git a/Makefile.inc b/Makefile.inc
+index 3746ceee..308f0da0 100644
+--- a/Makefile.inc
++++ b/Makefile.inc
+@@ -82,7 +82,7 @@ includedir	= $(prefix)/usr/include
+ pkgconfdir	= $(usrlibdir)/pkgconfig
+ runtimedir	= /$(RUN)
+ 
+-abstract_socket := /org/kernel/linux/storage/multipathd
++abstract_socket := @/org/kernel/linux/storage/multipathd
+ 
+ GZIP		= gzip -9 -c
+ RM		= rm -f
+diff --git a/libmpathcmd/mpath_cmd.c b/libmpathcmd/mpath_cmd.c
+index 60b2d965..146e790d 100644
+--- a/libmpathcmd/mpath_cmd.c
++++ b/libmpathcmd/mpath_cmd.c
+@@ -24,11 +24,13 @@
+ #include <sys/socket.h>
+ #include <sys/un.h>
+ #include <poll.h>
++#include <stddef.h>
+ #include <string.h>
+ #include <errno.h>
+ #include <fcntl.h>
+ 
+ #include "mpath_cmd.h"
++#include "mpath_fill_sockaddr.c"
+ 
+ /*
+  * keep reading until its all read
+@@ -101,14 +103,6 @@ int __mpath_connect(int nonblocking)
+ 	struct sockaddr_un addr;
+ 	int flags = 0;
+ 
+-	memset(&addr, 0, sizeof(addr));
+-	addr.sun_family = AF_LOCAL;
+-	addr.sun_path[0] = '\0';
+-	strncpy(&addr.sun_path[1], DEFAULT_SOCKET, sizeof(addr.sun_path) - 1);
+-	len = strlen(DEFAULT_SOCKET) + 1 + sizeof(sa_family_t);
+-	if (len > sizeof(struct sockaddr_un))
+-		len = sizeof(struct sockaddr_un);
+-
+ 	fd = socket(AF_LOCAL, SOCK_STREAM, 0);
+ 	if (fd == -1)
+ 		return -1;
+@@ -119,6 +113,7 @@ int __mpath_connect(int nonblocking)
+ 			(void)fcntl(fd, F_SETFL, flags|O_NONBLOCK);
+ 	}
+ 
++	len = mpath_fill_sockaddr__(&addr, DEFAULT_SOCKET);
+ 	if (connect(fd, (struct sockaddr *)&addr, len) == -1) {
+ 		int err = errno;
+ 
+diff --git a/libmpathcmd/mpath_fill_sockaddr.c b/libmpathcmd/mpath_fill_sockaddr.c
+new file mode 100644
+index 00000000..86c118d4
+--- /dev/null
++++ b/libmpathcmd/mpath_fill_sockaddr.c
+@@ -0,0 +1,30 @@
++/*
++ * Copyright (c) 2025 SUSE LLC
++ * SPDX-license-identifier: LGPL-2.1-or-newer
++ */
++
++static size_t mpath_fill_sockaddr__(struct sockaddr_un *addr, const char *name)
++{
++	size_t len;
++
++	addr->sun_family = AF_LOCAL;
++
++	if (name[0] != '@') {
++		/* Pathname socket. This should be NULL-terminated. */
++		strncpy(&addr->sun_path[0], name, sizeof(addr->sun_path) - 1);
++		addr->sun_path[sizeof(addr->sun_path) - 1] = '\0';
++		len = offsetof(struct sockaddr_un, sun_path) + strlen(name) + 1;
++	} else {
++		addr->sun_path[0] = '\0';
++		/*
++		 * The abstract socket's name doesn't need to be NULL terminated.
++		 * Actually, a trailing NULL would be considered part of the socket name.
++		 */
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wstringop-truncation"
++		strncpy(&addr->sun_path[1], &name[1], sizeof(addr->sun_path) - 1);
++#pragma GCC diagnostic pop
++		len = offsetof(struct sockaddr_un, sun_path) + strlen(name);
++	}
++	return len > sizeof(*addr) ? sizeof(*addr) : len;
++}
+diff --git a/libmultipath/uxsock.c b/libmultipath/uxsock.c
+index 6adeedfc..de1a21a3 100644
+--- a/libmultipath/uxsock.c
++++ b/libmultipath/uxsock.c
+@@ -6,12 +6,15 @@
+  */
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <string.h>
+ #include <unistd.h>
+ #include <stdarg.h>
++#include <stddef.h>
+ #include <fcntl.h>
+ #include <sys/ioctl.h>
+ #include <sys/types.h>
+ #include <sys/socket.h>
++#include <sys/stat.h>
+ #include <sys/un.h>
+ #include <poll.h>
+ #include <signal.h>
+@@ -34,6 +37,8 @@
+ static int _recv_packet(int fd, char **buf, unsigned int timeout,
+ 			ssize_t limit);
+ 
++#include "../libmpathcmd/mpath_fill_sockaddr.c"
++
+ /*
+  * create a unix domain socket and start listening on it
+  * return a file descriptor open on the socket
+@@ -64,15 +69,7 @@ int ux_socket_listen(const char *name)
+ 		return -1;
+ 	}
+ 
+-	memset(&addr, 0, sizeof(addr));
+-	addr.sun_family = AF_LOCAL;
+-	addr.sun_path[0] = '\0';
+-	len = strlen(name) + 1;
+-	if (len >= sizeof(addr.sun_path))
+-		len = sizeof(addr.sun_path) - 1;
+-	memcpy(&addr.sun_path[1], name, len);
+-
+-	len += sizeof(sa_family_t);
++	len = mpath_fill_sockaddr__(&addr, name);
+ 	if (bind(fd, (struct sockaddr *)&addr, len) == -1) {
+ 		condlog(3, "Couldn't bind to ux_socket, error %d", errno);
+ 		close(fd);

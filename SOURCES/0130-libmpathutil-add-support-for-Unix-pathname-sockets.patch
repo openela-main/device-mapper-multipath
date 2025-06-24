@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Wilck <mwilck@suse.com>
+Date: Fri, 14 Feb 2025 22:00:24 +0100
+Subject: [PATCH] libmpathutil: add support for Unix pathname sockets
+
+Pathname sockets need to be world read/writable in order to allow regular
+users to read information from multipathd. Our SO_PEERCRED permission check
+will make sure that they can't make configuration changes. Also, SO_REUSEADDR
+doesn't work for pathname sockets as it does for abstract Unix sockets. A
+possibly pre-existing socket file must be removed before trying to recreate it.
+
+Signed-off-by: Martin Wilck <mwilck@suse.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/uxsock.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/libmultipath/uxsock.c b/libmultipath/uxsock.c
+index de1a21a3..b0ba7e3b 100644
+--- a/libmultipath/uxsock.c
++++ b/libmultipath/uxsock.c
+@@ -63,6 +63,11 @@ int ux_socket_listen(const char *name)
+ 		return fd;
+ 	}
+ #endif
++
++	/* This is after the PID check, so unlinking should be fine */
++	if (name[0] != '@' && unlink(name) == -1 && errno != ENOENT)
++		condlog(1, "Failed to unlink %s", name);
++
+ 	fd = socket(AF_LOCAL, SOCK_STREAM, 0);
+ 	if (fd == -1) {
+ 		condlog(3, "Couldn't create ux_socket, error %d", errno);
+@@ -76,6 +81,14 @@ int ux_socket_listen(const char *name)
+ 		return -1;
+ 	}
+ 
++	/*
++	 * Socket needs to have rw permissions for everone.
++	 * SO_PEERCRED makes sure that only root can modify things.
++	 */
++	if (name[0] != '@' &&
++	    chmod(name, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH) == -1)
++		condlog(3, "failed to set permissions on %s: %s", name, strerror(errno));
++
+ 	if (listen(fd, 10) == -1) {
+ 		condlog(3, "Couldn't listen to ux_socket, error %d", errno);
+ 		close(fd);

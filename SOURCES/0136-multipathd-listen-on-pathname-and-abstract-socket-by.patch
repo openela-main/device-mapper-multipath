@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Wilck <mwilck@suse.com>
+Date: Wed, 12 Feb 2025 20:35:36 +0100
+Subject: [PATCH] multipathd: listen on pathname and abstract socket by default
+
+Pass both ABSTRACT_SOCKET and PATHNAME_SOCKET to the compiler at
+build time, and listen on both sockets by default.
+
+Signed-off-by: Martin Wilck <mwilck@suse.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ Makefile.inc            |  2 +-
+ libmpathcmd/mpath_cmd.c |  2 +-
+ multipathd/main.c       | 11 ++++++-----
+ 3 files changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/Makefile.inc b/Makefile.inc
+index 1de6c8a0..0a25c7b1 100644
+--- a/Makefile.inc
++++ b/Makefile.inc
+@@ -125,7 +125,7 @@ WARNFLAGS	:= -Werror -Wextra -Wformat=2 $(WFORMATOVERFLOW) -Werror=implicit-int
+ 		  $(WNOCLOBBERED) -Werror=cast-qual $(ERROR_DISCARDED_QUALIFIERS) \
+ 		  -Wstrict-prototypes
+ CFLAGS		:= --std=gnu99 $(CFLAGS) $(OPTFLAGS) $(WARNFLAGS) -pipe \
+-		   -DBIN_DIR=\"$(bindir)\" -DLIB_STRING=\"${LIB}\" -DRUN_DIR=\"${RUN}\" -DRUNTIME_DIR=\"$(runtimedir)\" -DDEFAULT_SOCKET=\"$(abstract_socket)\"  \
++		   -DBIN_DIR=\"$(bindir)\" -DLIB_STRING=\"${LIB}\" -DRUN_DIR=\"${RUN}\" -DRUNTIME_DIR=\"$(runtimedir)\" -DABSTRACT_SOCKET=\"$(abstract_socket)\"  -DPATHNAME_SOCKET=\"$(pathname_socket)\" \
+ 		   -MMD -MP
+ BIN_CFLAGS	= -fPIE -DPIE
+ LIB_CFLAGS	= -fPIC
+diff --git a/libmpathcmd/mpath_cmd.c b/libmpathcmd/mpath_cmd.c
+index 146e790d..54143fb1 100644
+--- a/libmpathcmd/mpath_cmd.c
++++ b/libmpathcmd/mpath_cmd.c
+@@ -113,7 +113,7 @@ int __mpath_connect(int nonblocking)
+ 			(void)fcntl(fd, F_SETFL, flags|O_NONBLOCK);
+ 	}
+ 
+-	len = mpath_fill_sockaddr__(&addr, DEFAULT_SOCKET);
++	len = mpath_fill_sockaddr__(&addr, ABSTRACT_SOCKET);
+ 	if (connect(fd, (struct sockaddr *)&addr, len) == -1) {
+ 		int err = errno;
+ 
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 01903914..e44df6b6 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -1751,13 +1751,14 @@ uxlsnrloop (void * ap)
+ 	pthread_cleanup_push(rcu_unregister, NULL);
+ 	rcu_register_thread();
+ 
+-	num = get_systemd_sockets(&ux_sock);
++	num = get_systemd_sockets(ux_sock);
+ 	if (num < 1) {
+-		ux_sock[0] = ux_socket_listen(DEFAULT_SOCKET);
+-		num = 1;
++		ux_sock[0] = ux_socket_listen(ABSTRACT_SOCKET);
++		ux_sock[1] = ux_socket_listen(PATHNAME_SOCKET);
++		num = 2;
+ 	}
+-	if (ux_sock[0] == -1) {
+-		condlog(1, "could not create uxsock: %d", errno);
++	if (ux_sock[0] == -1 && ux_sock[1] == -1) {
++		condlog(1, "could not create sockets: %d", errno);
+ 		exit_daemon();
+ 		goto out;
+ 	}

@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Wilck <mwilck@suse.com>
+Date: Tue, 7 Sep 2021 22:08:53 +0200
+Subject: [PATCH] multipathd: uxlsnr: use symbolic values for pollfd indices
+
+Avoid hardcoding the indices as 0, 1, 2...
+
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipathd/uxlsnr.c | 25 +++++++++++++++----------
+ 1 file changed, 15 insertions(+), 10 deletions(-)
+
+diff --git a/multipathd/uxlsnr.c b/multipathd/uxlsnr.c
+index a320a0c6..7c081799 100644
+--- a/multipathd/uxlsnr.c
++++ b/multipathd/uxlsnr.c
+@@ -46,8 +46,13 @@ struct client {
+ 	int fd;
+ };
+ 
+-/* The number of fds we poll on, other than individual client connections */
+-#define POLLFDS_BASE 2
++/* Indices for array of poll fds */
++enum {
++	POLLFD_UX = 0,
++	POLLFD_NOTIFY,
++	POLLFDS_BASE,
++};
++
+ #define POLLFD_CHUNK (4096 / sizeof(struct pollfd))
+ /* Minimum mumber of pollfds to reserve for clients */
+ #define MIN_POLLS (POLLFD_CHUNK - POLLFDS_BASE)
+@@ -379,8 +384,8 @@ void *uxsock_listen(long ux_sock, void *trigger_data)
+ 			}
+ 		}
+ 		if (num_clients < MAX_CLIENTS) {
+-			polls[0].fd = ux_sock;
+-			polls[0].events = POLLIN;
++			polls[POLLFD_UX].fd = ux_sock;
++			polls[POLLFD_UX].events = POLLIN;
+ 		} else {
+ 			/*
+ 			 * New clients can't connect, num_clients won't grow
+@@ -388,15 +393,15 @@ void *uxsock_listen(long ux_sock, void *trigger_data)
+ 			 */
+ 			condlog(1, "%s: max client connections reached, pausing polling",
+ 				__func__);
+-			polls[0].fd = -1;
++			polls[POLLFD_UX].fd = -1;
+ 		}
+ 
+ 		reset_watch(notify_fd, &wds, &sequence_nr);
+ 		if (notify_fd == -1 || (wds.conf_wd == -1 && wds.dir_wd == -1))
+-			polls[1].fd = -1;
++			polls[POLLFD_NOTIFY].fd = -1;
+ 		else
+-			polls[1].fd = notify_fd;
+-		polls[1].events = POLLIN;
++			polls[POLLFD_NOTIFY].fd = notify_fd;
++		polls[POLLFD_NOTIFY].events = POLLIN;
+ 
+ 		/* setup the clients */
+ 		i = POLLFDS_BASE;
+@@ -500,12 +505,12 @@ void *uxsock_listen(long ux_sock, void *trigger_data)
+ 		handle_signals(true);
+ 
+ 		/* see if we got a new client */
+-		if (polls[0].revents & POLLIN) {
++		if (polls[POLLFD_UX].revents & POLLIN) {
+ 			new_client(ux_sock);
+ 		}
+ 
+ 		/* handle inotify events on config files */
+-		if (polls[1].revents & POLLIN)
++		if (polls[POLLFD_NOTIFY].revents & POLLIN)
+ 			handle_inotify(notify_fd, &wds);
+ 	}
+ 

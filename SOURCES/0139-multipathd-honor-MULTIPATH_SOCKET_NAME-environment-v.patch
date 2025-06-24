@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Wilck <mwilck@suse.com>
+Date: Fri, 14 Feb 2025 22:18:06 +0100
+Subject: [PATCH] multipathd: honor MULTIPATH_SOCKET_NAME environment variable
+
+If multipathd is started via socket activation, it will obtain
+sockets from systemd. The names of these sockets, and whether
+the abstract and / or pathname socket is created, is configurable
+in the systemd unit file.
+
+Add support for passing a socket name via the environment, so that
+it's possible to configure the socket name at runtime even without
+socket activation. In this case, only this single socket will be created.
+If creating the socket fails, multipathd startup will fail, too.
+
+Signed-off-by: Martin Wilck <mwilck@suse.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipathd/main.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/multipathd/main.c b/multipathd/main.c
+index e44df6b6..820d4e68 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -1747,11 +1747,16 @@ uxlsnrloop (void * ap)
+ {
+ 	long ux_sock[2] = {-1, -1};
+ 	int num;
++	const char *env_name = getenv("MULTIPATH_SOCKET_NAME");
+ 
+ 	pthread_cleanup_push(rcu_unregister, NULL);
+ 	rcu_register_thread();
+ 
+ 	num = get_systemd_sockets(ux_sock);
++	if (num < 1 && env_name != NULL) {
++		ux_sock[0] = ux_socket_listen(env_name);
++		num = 1;
++	}
+ 	if (num < 1) {
+ 		ux_sock[0] = ux_socket_listen(ABSTRACT_SOCKET);
+ 		ux_sock[1] = ux_socket_listen(PATHNAME_SOCKET);

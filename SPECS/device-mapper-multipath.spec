@@ -1,6 +1,6 @@
 Name:    device-mapper-multipath
 Version: 0.8.7
-Release: 35%{?dist}
+Release: 35%{?dist}.1
 Summary: Tools to manage multipath devices using device-mapper
 License: GPLv2
 URL:     http://christophe.varoqui.free.fr/
@@ -137,6 +137,18 @@ Patch0124: 0124-libmultipath-add-missing-assert-to-checkers.c.patch
 Patch0125: 0125-libmultipath-foreign-fix-memory-leak-in-nvme-foreign.patch
 Patch0126: 0126-libmultipath-export-udev-pthread-cleanup-functions.patch
 Patch0127: 0127-multipathd-set-rport-port_state-to-marginal-for-NVMe.patch
+Patch0128: 0128-multipath-tools-move-DEFAULT_SOCKET-definition-into-.patch
+Patch0129: 0129-multipath-tools-add-helper-mpath_fill_sockaddr__.patch
+Patch0130: 0130-libmpathutil-add-support-for-Unix-pathname-sockets.patch
+Patch0131: 0131-libmpathutil-move-systemd_listen_fds-support-into-mu.patch
+Patch0132: 0132-multipathd-move-uxsock_trigger-to-uxlsnr.c.patch
+Patch0133: 0133-multipathd-uxlsnr-use-symbolic-values-for-pollfd-ind.patch
+Patch0134: 0134-multipathd-make-uxsock_listen-take-a-pointer-to-fd.patch
+Patch0135: 0135-multipathd-allow-receiving-two-socket-fds-from-syste.patch
+Patch0136: 0136-multipathd-listen-on-pathname-and-abstract-socket-by.patch
+Patch0137: 0137-libmpathcmd-try-both-abstract-and-pathname-sockets.patch
+Patch0138: 0138-libmpathcmd-honor-MULTIPATH_SOCKET_NAME-environment-.patch
+Patch0139: 0139-multipathd-honor-MULTIPATH_SOCKET_NAME-environment-v.patch
 
 
 # runtime
@@ -340,6 +352,23 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
+* Tue Mar  4 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-35.1
+- Add 0128-multipath-tools-move-DEFAULT_SOCKET-definition-into-.patch
+- Add 0129-multipath-tools-add-helper-mpath_fill_sockaddr__.patch
+- Add 0130-libmpathutil-add-support-for-Unix-pathname-sockets.patch
+- Add 0131-libmpathutil-move-systemd_listen_fds-support-into-mu.patch
+- Add 0132-multipathd-move-uxsock_trigger-to-uxlsnr.c.patch
+- Add 0133-multipathd-uxlsnr-use-symbolic-values-for-pollfd-ind.patch
+- Add 0134-multipathd-make-uxsock_listen-take-a-pointer-to-fd.patch
+- Add 0135-multipathd-allow-receiving-two-socket-fds-from-syste.patch
+- Add 0136-multipathd-listen-on-pathname-and-abstract-socket-by.patch
+- Add 0137-libmpathcmd-try-both-abstract-and-pathname-sockets.patch
+- Add 0138-libmpathcmd-honor-MULTIPATH_SOCKET_NAME-environment-.patch
+- Add 0139-multipathd-honor-MULTIPATH_SOCKET_NAME-environment-v.patch
+  * Fixes RHEL-80352 ("RFE: Enable multipathd to communicate with a
+    process in another network namespace")
+- Resolves: RHEL-80352
+
 * Thu Jan  9 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-35
 - Add 0124-libmultipath-add-missing-assert-to-checkers.c.patch
 - Add 0125-libmultipath-foreign-fix-memory-leak-in-nvme-foreign.patch

@@ -1,0 +1,243 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Wilck <mwilck@suse.com>
+Date: Fri, 14 Feb 2025 21:57:02 +0100
+Subject: [PATCH] multipath-tools: add helper mpath_fill_sockaddr__()
+
+Create a static new helper function which is used by both libmpathcmd
+and libmpathutil and fills in the socket address name from the compile-time
+default. The function is able to handle both abstract and pathname sockets,
+but more changes are needed to make the latter actually work.
+
+Signed-off-by: Martin Wilck <mwilck@suse.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ .gitignore                                    |  1 +
+ Makefile.inc                                  |  8 +++--
+ create-config.mk                              |  1 +
+ libmpathcmd/mpath_cmd.c                       | 11 ++-----
+ libmpathcmd/mpath_fill_sockaddr.c             | 32 +++++++++++++++++++
+ libmpathutil/uxsock.c                         | 15 ++++-----
+ multipathd/Makefile                           |  4 +--
+ ...multipathd.socket => multipathd.socket.in} |  2 +-
+ 8 files changed, 51 insertions(+), 23 deletions(-)
+ create mode 100644 libmpathcmd/mpath_fill_sockaddr.c
+ rename multipathd/{multipathd.socket => multipathd.socket.in} (88%)
+
+diff --git a/.gitignore b/.gitignore
+index 049ffe88..87446d9f 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -22,6 +22,7 @@ multipathd/multipathd
+ multipathd/multipathd.8
+ multipathd/multipathc
+ multipathd/multipathd.service
++multipathd/multipathd.socket
+ mpathpersist/mpathpersist
+ mpathpersist/mpathpersist.8
+ abi.tar.gz
+diff --git a/Makefile.inc b/Makefile.inc
+index 80de8ecb..1ef3f7f8 100644
+--- a/Makefile.inc
++++ b/Makefile.inc
+@@ -75,7 +75,7 @@ devmapper_incdir := $(or $(shell $(PKG_CONFIG) --variable=includedir devmapper),
+ libudev_incdir	:= $(or $(shell $(PKG_CONFIG) --variable=includedir libudev),/usr/include)
+ kernel_incdir	:= /usr/include
+ 
+-abstract_socket := /org/kernel/linux/storage/multipathd
++abstract_socket := @/org/kernel/linux/storage/multipathd
+ 
+ ifeq ($(V),)
+ Q		:= @
+@@ -119,7 +119,9 @@ CPPFLAGS	:= $(CPPFLAGS) $(D_URCU_VERSION) \
+ 		   -DRUNTIME_DIR=\"$(runtimedir)\" -DCONFIG_DIR=\"$(TGTDIR)$(configdir)\" \
+ 		   -DDEFAULT_CONFIGFILE=\"$(TGTDIR)$(configfile)\" -DSTATE_DIR=\"$(TGTDIR)$(statedir)\" \
+ 		   -DEXTRAVERSION=\"$(EXTRAVERSION)\" \
+-		   -DDEFAULT_SOCKET=\"$(abstract_socket)\" -MMD -MP
++		   -DDEFAULT_SOCKET=\"$(abstract_socket)\" \
++		   -DWSTRINGOP_TRUNCATION=$(if $(WSTRINGOP_TRUNCATION),1,0) \
++		   -MMD -MP
+ CFLAGS		:= -std=gnu99 $(CFLAGS) $(OPTFLAGS) $(WARNFLAGS) -pipe
+ BIN_CFLAGS	:= -fPIE -DPIE
+ LIB_CFLAGS	:= -fPIC
+@@ -164,4 +166,4 @@ NV_VERSION_SCRIPT = $(DEVLIB:%.so=%-nv.version)
+ 
+ %:	%.in
+ 	@echo creating $@
+-	$(Q)sed 's:@CONFIGFILE@:'$(TGTDIR)$(configfile)':g;s:@CONFIGDIR@:'$(TGTDIR)$(configdir)':g;s:@STATE_DIR@:'$(TGTDIR)$(statedir)':g;s:@RUNTIME_DIR@:'$(runtimedir)':g;s/@MODPROBE_UNIT@/'$(MODPROBE_UNIT)'/g;s:@BINDIR@:'$(bindir)':g' $< >$@
++	$(Q)sed 's:@CONFIGFILE@:'$(TGTDIR)$(configfile)':g;s:@CONFIGDIR@:'$(TGTDIR)$(configdir)':g;s:@STATE_DIR@:'$(TGTDIR)$(statedir)':g;s:@RUNTIME_DIR@:'$(runtimedir)':g;s/@MODPROBE_UNIT@/'$(MODPROBE_UNIT)'/g;s:@BINDIR@:'$(bindir)':g;s,@MPATH_SOCKET@,'$(abstract_socket)',g' $< >$@
+diff --git a/create-config.mk b/create-config.mk
+index 4d318b96..5cdff69a 100644
+--- a/create-config.mk
++++ b/create-config.mk
+@@ -179,6 +179,7 @@ $(TOPDIR)/config.mk:	$(multipathdir)/autoconfig.h
+ 	@echo "ERROR_DISCARDED_QUALIFIERS := $(call TEST_CC_OPTION,-Werror=discarded-qualifiers,)" >>$@
+ 	@echo "WNOCLOBBERED := $(call TEST_CC_OPTION,-Wno-clobbered -Wno-error=clobbered,)" >>$@
+ 	@echo "WFORMATOVERFLOW := $(call TEST_CC_OPTION,-Wformat-overflow=2,)" >>$@
++	@echo "WSTRINGOP_TRUNCATION := $(call TEST_CC_OPTION,-Wstringop-truncation)" >>$@
+ 	@echo "W_MISSING_INITIALIZERS := $(call TEST_MISSING_INITIALIZERS)" >>$@
+ 	@echo "W_URCU_TYPE_LIMITS := $(call TEST_URCU_TYPE_LIMITS)" >>$@
+ 	@echo "ENABLE_LIBDMMP := $(ENABLE_LIBDMMP)" >>$@
+diff --git a/libmpathcmd/mpath_cmd.c b/libmpathcmd/mpath_cmd.c
+index 60b2d965..146e790d 100644
+--- a/libmpathcmd/mpath_cmd.c
++++ b/libmpathcmd/mpath_cmd.c
+@@ -24,11 +24,13 @@
+ #include <sys/socket.h>
+ #include <sys/un.h>
+ #include <poll.h>
++#include <stddef.h>
+ #include <string.h>
+ #include <errno.h>
+ #include <fcntl.h>
+ 
+ #include "mpath_cmd.h"
++#include "mpath_fill_sockaddr.c"
+ 
+ /*
+  * keep reading until its all read
+@@ -101,14 +103,6 @@ int __mpath_connect(int nonblocking)
+ 	struct sockaddr_un addr;
+ 	int flags = 0;
+ 
+-	memset(&addr, 0, sizeof(addr));
+-	addr.sun_family = AF_LOCAL;
+-	addr.sun_path[0] = '\0';
+-	strncpy(&addr.sun_path[1], DEFAULT_SOCKET, sizeof(addr.sun_path) - 1);
+-	len = strlen(DEFAULT_SOCKET) + 1 + sizeof(sa_family_t);
+-	if (len > sizeof(struct sockaddr_un))
+-		len = sizeof(struct sockaddr_un);
+-
+ 	fd = socket(AF_LOCAL, SOCK_STREAM, 0);
+ 	if (fd == -1)
+ 		return -1;
+@@ -119,6 +113,7 @@ int __mpath_connect(int nonblocking)
+ 			(void)fcntl(fd, F_SETFL, flags|O_NONBLOCK);
+ 	}
+ 
++	len = mpath_fill_sockaddr__(&addr, DEFAULT_SOCKET);
+ 	if (connect(fd, (struct sockaddr *)&addr, len) == -1) {
+ 		int err = errno;
+ 
+diff --git a/libmpathcmd/mpath_fill_sockaddr.c b/libmpathcmd/mpath_fill_sockaddr.c
+new file mode 100644
+index 00000000..750ef3ee
+--- /dev/null
++++ b/libmpathcmd/mpath_fill_sockaddr.c
+@@ -0,0 +1,32 @@
++/*
++ * Copyright (c) 2025 SUSE LLC
++ * SPDX-license-identifier: LGPL-2.1-or-newer
++ */
++
++static size_t mpath_fill_sockaddr__(struct sockaddr_un *addr, const char *name)
++{
++	size_t len;
++
++	addr->sun_family = AF_LOCAL;
++
++	if (name[0] != '@') {
++		/* Pathname socket. This should be NULL-terminated. */
++		strncpy(&addr->sun_path[0], name, sizeof(addr->sun_path) - 1);
++		addr->sun_path[sizeof(addr->sun_path) - 1] = '\0';
++		len = offsetof(struct sockaddr_un, sun_path) + strlen(name) + 1;
++	} else {
++		addr->sun_path[0] = '\0';
++		/*
++		 * The abstract socket's name doesn't need to be NULL terminated.
++		 * Actually, a trailing NULL would be considered part of the socket name.
++		 */
++#pragma GCC diagnostic push
++#if WSTRINGOP_TRUNCATION
++#pragma GCC diagnostic ignored "-Wstringop-truncation"
++#endif
++		strncpy(&addr->sun_path[1], &name[1], sizeof(addr->sun_path) - 1);
++#pragma GCC diagnostic pop
++		len = offsetof(struct sockaddr_un, sun_path) + strlen(name);
++	}
++	return len > sizeof(*addr) ? sizeof(*addr) : len;
++}
+diff --git a/libmpathutil/uxsock.c b/libmpathutil/uxsock.c
+index 2135476d..12c46084 100644
+--- a/libmpathutil/uxsock.c
++++ b/libmpathutil/uxsock.c
+@@ -6,12 +6,15 @@
+  */
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <string.h>
+ #include <unistd.h>
+ #include <stdarg.h>
++#include <stddef.h>
+ #include <fcntl.h>
+ #include <sys/ioctl.h>
+ #include <sys/types.h>
+ #include <sys/socket.h>
++#include <sys/stat.h>
+ #include <sys/un.h>
+ #include <poll.h>
+ #include <signal.h>
+@@ -33,6 +36,8 @@
+ static int _recv_packet(int fd, char **buf, unsigned int timeout,
+ 			ssize_t limit);
+ 
++#include "../libmpathcmd/mpath_fill_sockaddr.c"
++
+ /*
+  * create a unix domain socket and start listening on it
+  * return a file descriptor open on the socket
+@@ -63,15 +68,7 @@ int ux_socket_listen(const char *name)
+ 		return -1;
+ 	}
+ 
+-	memset(&addr, 0, sizeof(addr));
+-	addr.sun_family = AF_LOCAL;
+-	addr.sun_path[0] = '\0';
+-	len = strlen(name) + 1;
+-	if (len >= sizeof(addr.sun_path))
+-		len = sizeof(addr.sun_path) - 1;
+-	memcpy(&addr.sun_path[1], name, len);
+-
+-	len += sizeof(sa_family_t);
++	len = mpath_fill_sockaddr__(&addr, name);
+ 	if (bind(fd, (struct sockaddr *)&addr, len) == -1) {
+ 		condlog(3, "Couldn't bind to ux_socket, error %d", errno);
+ 		close(fd);
+diff --git a/multipathd/Makefile b/multipathd/Makefile
+index 997b40cf..61cf1af6 100644
+--- a/multipathd/Makefile
++++ b/multipathd/Makefile
+@@ -41,7 +41,7 @@ ifeq ($(FPIN_SUPPORT),1)
+ OBJS += fpin_handlers.o
+ endif
+ 
+-all : $(EXEC) $(CLI) $(MANPAGES) $(EXEC).service
++all : $(EXEC) $(CLI) $(MANPAGES) $(EXEC).service $(EXEC).socket
+ 
+ $(EXEC): $(OBJS) $(multipathdir)/libmultipath.so $(mpathcmddir)/libmpathcmd.so
+ 	@echo building $@ because of $?
+@@ -78,7 +78,7 @@ uninstall:
+ 	$(Q)$(RM) $(DESTDIR)$(unitdir)/$(EXEC).socket
+ 
+ clean: dep_clean
+-	$(Q)$(RM) core *.o $(EXEC) $(CLI) $(MANPAGES) $(EXEC).service
++	$(Q)$(RM) core *.o $(EXEC) $(CLI) $(MANPAGES) $(EXEC).service $(EXEC).socket
+ 
+ include $(wildcard $(OBJS:.o=.d) $(CLI_OBJS:.o=.d))
+ 
+diff --git a/multipathd/multipathd.socket b/multipathd/multipathd.socket.in
+similarity index 88%
+rename from multipathd/multipathd.socket
+rename to multipathd/multipathd.socket.in
+index 263b6b0c..4ed9c1ff 100644
+--- a/multipathd/multipathd.socket
++++ b/multipathd/multipathd.socket.in
+@@ -8,7 +8,7 @@ ConditionVirtualization=!container
+ Before=sockets.target
+ 
+ [Socket]
+-ListenStream=@/org/kernel/linux/storage/multipathd
++ListenStream=@MPATH_SOCKET@
+ 
+ [Install]
+ # Socket activation for multipathd is disabled by default.

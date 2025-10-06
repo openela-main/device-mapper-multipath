@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Wilck <mwilck@suse.com>
+Date: Tue, 11 Feb 2025 16:51:59 +0100
+Subject: [PATCH] multipath-tools: move DEFAULT_SOCKET definition into
+ Makefile.inc
+
+This enables configuring the socket name. Follow up patches will
+add more flexibility for configuring the sockets.
+
+Signed-off-by: Martin Wilck <mwilck@suse.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ Makefile.inc            | 5 ++++-
+ libmpathcmd/mpath_cmd.h | 1 -
+ libmultipath/defaults.h | 1 -
+ 3 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/Makefile.inc b/Makefile.inc
+index a3ed9f28..80de8ecb 100644
+--- a/Makefile.inc
++++ b/Makefile.inc
+@@ -75,6 +75,8 @@ devmapper_incdir := $(or $(shell $(PKG_CONFIG) --variable=includedir devmapper),
+ libudev_incdir	:= $(or $(shell $(PKG_CONFIG) --variable=includedir libudev),/usr/include)
+ kernel_incdir	:= /usr/include
+ 
++abstract_socket := /org/kernel/linux/storage/multipathd
++
+ ifeq ($(V),)
+ Q		:= @
+ # make's "Entering directory" messages are confusing in parallel mode
+@@ -116,7 +118,8 @@ CPPFLAGS	:= $(CPPFLAGS) $(D_URCU_VERSION) \
+ 		   -DBIN_DIR=\"$(bindir)\" -DMULTIPATH_DIR=\"$(TGTDIR)$(plugindir)\" \
+ 		   -DRUNTIME_DIR=\"$(runtimedir)\" -DCONFIG_DIR=\"$(TGTDIR)$(configdir)\" \
+ 		   -DDEFAULT_CONFIGFILE=\"$(TGTDIR)$(configfile)\" -DSTATE_DIR=\"$(TGTDIR)$(statedir)\" \
+-		   -DEXTRAVERSION=\"$(EXTRAVERSION)\" -MMD -MP
++		   -DEXTRAVERSION=\"$(EXTRAVERSION)\" \
++		   -DDEFAULT_SOCKET=\"$(abstract_socket)\" -MMD -MP
+ CFLAGS		:= -std=gnu99 $(CFLAGS) $(OPTFLAGS) $(WARNFLAGS) -pipe
+ BIN_CFLAGS	:= -fPIE -DPIE
+ LIB_CFLAGS	:= -fPIC
+diff --git a/libmpathcmd/mpath_cmd.h b/libmpathcmd/mpath_cmd.h
+index 0c293c71..5ab5a6e5 100644
+--- a/libmpathcmd/mpath_cmd.h
++++ b/libmpathcmd/mpath_cmd.h
+@@ -30,7 +30,6 @@
+ extern "C" {
+ #endif
+ 
+-#define DEFAULT_SOCKET		"/org/kernel/linux/storage/multipathd"
+ #define DEFAULT_REPLY_TIMEOUT	4000
+ 
+ 
+diff --git a/libmultipath/defaults.h b/libmultipath/defaults.h
+index 4b033ff9..3602636c 100644
+--- a/libmultipath/defaults.h
++++ b/libmultipath/defaults.h
+@@ -66,7 +66,6 @@
+ #define DEV_LOSS_TMO_UNSET	0U
+ #define MAX_DEV_LOSS_TMO	UINT_MAX
+ #define DEFAULT_PIDFILE		RUNTIME_DIR "/multipathd.pid"
+-#define DEFAULT_SOCKET		"/org/kernel/linux/storage/multipathd"
+ #define DEFAULT_BINDINGS_FILE	STATE_DIR "/bindings"
+ #define DEFAULT_WWIDS_FILE	STATE_DIR "/wwids"
+ #define DEFAULT_PRKEYS_FILE	STATE_DIR "/prkeys"

@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Wed, 5 Jun 2024 19:22:48 -0400
+Subject: [PATCH] multipathd: fix flush check in flush_map()
+
+Forgot the comparison in the "if" statement.
+
+Fixes 8a3898339 ("multipathd: sync features on flush_map failure corner case")
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ multipathd/main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 09286dd0..58afe14a 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -813,7 +813,7 @@ flush_map(struct multipath * mpp, struct vectors * vecs)
+ {
+ 	int r = dm_suspend_and_flush_map(mpp->alias, 0);
+ 	if (r != DM_FLUSH_OK) {
+-		if (DM_FLUSH_FAIL_CANT_RESTORE)
++		if (r == DM_FLUSH_FAIL_CANT_RESTORE)
+ 			remove_feature(&mpp->features, "queue_if_no_path");
+ 		condlog(0, "%s: can't flush", mpp->alias);
+ 		return r;

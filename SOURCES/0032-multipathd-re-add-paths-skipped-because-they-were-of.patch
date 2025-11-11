@@ -1,0 +1,202 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Wed, 2 Apr 2025 19:13:21 -0400
+Subject: [PATCH] multipathd: re-add paths skipped because they were offline
+
+When a new device is added by the multipath command, multipathd may know
+of other paths that cannot be added to the device because they are
+currently offline. Instead of ignoring these paths, multipathd will now
+re-add them when they come back online. To do this, it multipathd needs
+a new path variable add_when_online, to track devices that could not be
+added to an existing multipath device because they were offline. These
+paths are handled along with the other uninitialized paths.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmultipath/libmultipath.version |  5 +++
+ libmultipath/print.c              |  5 ++-
+ libmultipath/structs.h            |  1 +
+ libmultipath/structs_vec.c        |  5 +++
+ multipathd/main.c                 | 53 ++++++++++++++++++++++++++++++-
+ multipathd/multipathd.8.in        |  5 +--
+ 6 files changed, 70 insertions(+), 4 deletions(-)
+
+diff --git a/libmultipath/libmultipath.version b/libmultipath/libmultipath.version
+index eb511749..0b7a1a2b 100644
+--- a/libmultipath/libmultipath.version
++++ b/libmultipath/libmultipath.version
+@@ -241,3 +241,8 @@ global:
+ local:
+ 	*;
+ };
++
++LIBMULTIPATH_24.0.1 {
++global:
++	can_recheck_wwid;
++} LIBMULTIPATH_24.0.0;
+diff --git a/libmultipath/print.c b/libmultipath/print.c
+index d592001d..fbed2dd5 100644
+--- a/libmultipath/print.c
++++ b/libmultipath/print.c
+@@ -664,8 +664,11 @@ snprint_path_serial (struct strbuf *buff, const struct path * pp)
+ static int
+ snprint_path_mpp (struct strbuf *buff, const struct path * pp)
+ {
+-	if (!pp->mpp)
++	if (!pp->mpp) {
++		if (pp->add_when_online)
++			return append_strbuf_str(buff, "[offline]");
+ 		return append_strbuf_str(buff, "[orphan]");
++	}
+ 	if (!pp->mpp->alias)
+ 		return append_strbuf_str(buff, "[unknown]");
+ 	return snprint_str(buff, pp->mpp->alias);
+diff --git a/libmultipath/structs.h b/libmultipath/structs.h
+index dbaf4d43..5dc00fbc 100644
+--- a/libmultipath/structs.h
++++ b/libmultipath/structs.h
+@@ -396,6 +396,7 @@ struct path {
+ 	int eh_deadline;
+ 	bool is_checked;
+ 	bool can_use_env_uid;
++	bool add_when_online;
+ 	unsigned int checker_timeout;
+ 	/* configlet pointers */
+ 	vector hwe;
+diff --git a/libmultipath/structs_vec.c b/libmultipath/structs_vec.c
+index ccc4efc7..23e135ce 100644
+--- a/libmultipath/structs_vec.c
++++ b/libmultipath/structs_vec.c
+@@ -374,6 +374,9 @@ static void orphan_paths(vector pathvec, struct multipath *mpp, const char *reas
+ 				free_path(pp);
+ 			} else
+ 				orphan_path(pp, reason);
++		} else if (pp->add_when_online &&
++			   strncmp(mpp->wwid, pp->wwid, WWID_SIZE) == 0) {
++			pp->add_when_online = false;
+ 		}
+ 	}
+ }
+@@ -560,6 +563,8 @@ void sync_paths(struct multipath *mpp, vector pathvec)
+ 		found = 0;
+ 		vector_foreach_slot(mpp->pg, pgp, j) {
+ 			if (find_slot(pgp->paths, (void *)pp) != -1) {
++				if (pp->add_when_online)
++					pp->add_when_online = false;
+ 				found = 1;
+ 				break;
+ 			}
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 8ce36a3c..a565ade5 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -651,11 +651,44 @@ pr_register_active_paths(struct multipath *mpp)
+ 	}
+ }
+ 
++static void
++save_offline_paths(const struct multipath *mpp, vector offline_paths)
++{
++	unsigned int i, j;
++	struct path *pp;
++	struct pathgroup *pgp;
++
++	vector_foreach_slot (mpp->pg, pgp, i)
++		vector_foreach_slot (pgp->paths, pp, j)
++			if (pp->initialized == INIT_OK && pp->offline)
++				/* ignore failures storing the paths. */
++				store_path(offline_paths, pp);
++}
++
++static void
++handle_orphaned_offline_paths(vector offline_paths)
++{
++	unsigned int i;
++	struct path *pp;
++
++	vector_foreach_slot (offline_paths, pp, i)
++		if (pp->mpp == NULL)
++			pp->add_when_online = true;
++}
++
++static void
++cleanup_reset_vec(struct _vector **v)
++{
++	vector_reset(*v);
++}
++
+ static int
+ update_map (struct multipath *mpp, struct vectors *vecs, int new_map)
+ {
+ 	int retries = 3;
+ 	char *params __attribute__((cleanup(cleanup_charp))) = NULL;
++	struct _vector offline_paths_vec = { .allocated = 0 };
++	vector offline_paths __attribute__((cleanup(cleanup_reset_vec))) = &offline_paths_vec;
+ 
+ retry:
+ 	condlog(4, "%s: updating new map", mpp->alias);
+@@ -692,6 +725,9 @@ fail:
+ 		return 1;
+ 	}
+ 
++	if (new_map && retries < 0)
++		save_offline_paths(mpp, offline_paths);
++
+ 	if (setup_multipath(vecs, mpp))
+ 		return 1;
+ 
+@@ -702,6 +738,9 @@ fail:
+ 	if (mpp->prflag == PRFLAG_SET)
+ 		pr_register_active_paths(mpp);
+ 
++	if (VECTOR_SIZE(offline_paths) != 0)
++		handle_orphaned_offline_paths(offline_paths);
++
+ 	if (retries < 0)
+ 		condlog(0, "%s: failed reload in new map update", mpp->alias);
+ 	return 0;
+@@ -2360,7 +2399,8 @@ check_path (struct vectors * vecs, struct path * pp, unsigned int ticks)
+ 	bool need_reload;
+ 
+ 	if (((pp->initialized == INIT_OK || pp->initialized == INIT_PARTIAL ||
+-	      pp->initialized == INIT_REQUESTED_UDEV) && !pp->mpp) ||
++	      pp->initialized == INIT_REQUESTED_UDEV) && !pp->mpp &&
++	      !pp->add_when_online) ||
+ 	    pp->initialized == INIT_REMOVED)
+ 		return 0;
+ 
+@@ -2481,6 +2521,17 @@ check_path (struct vectors * vecs, struct path * pp, unsigned int ticks)
+ 				 */
+ 				pp->checkint = max_checkint;
+ 			}
++		} else if (pp->initialized == INIT_OK && pp->add_when_online &&
++			   (newstate == PATH_UP || newstate == PATH_GHOST)) {
++			pp->add_when_online = false;
++			if (can_recheck_wwid(pp) &&
++			    check_path_wwid_change(pp)) {
++				condlog(0, "%s: path wwid change detected. Removing", pp->dev);
++				handle_path_wwid_change(pp, vecs);
++				return 0;
++			}
++			ev_add_path(pp, vecs, 1);
++			pp->tick = 1;
+ 		}
+ 		return 0;
+ 	}
+diff --git a/multipathd/multipathd.8.in b/multipathd/multipathd.8.in
+index 5b1aeb42..342e363e 100644
+--- a/multipathd/multipathd.8.in
++++ b/multipathd/multipathd.8.in
+@@ -597,8 +597,9 @@ The device serial number.
+ The device marginal state, either \fImarginal\fR or \fInormal\fR.
+ .TP
+ .B %m
+-The multipath device that this device is a path of, or \fI[orphan]\fR if
+-it is not part of any multipath device.
++The multipath device that this device is a path of, or \fI[offline]\fR
++if this device could not be added to a device because it is offline or
++\fI[orphan]\fR if it is not part of any multipath device.
+ .TP
+ .B %N
+ The host World Wide Node Name (WWNN) of the device, if any.

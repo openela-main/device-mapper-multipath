@@ -1,6 +1,6 @@
 Name:    device-mapper-multipath
 Version: 0.9.9
-Release: 6%{?dist}.2
+Release: 12%{?dist}
 Summary: Tools to manage multipath devices using device-mapper
 License: GPLv2
 URL:     http://christophe.varoqui.free.fr/
@@ -39,6 +39,11 @@ Patch0026: 0026-libmpathcmd-honor-MULTIPATH_SOCKET_NAME-environment-.patch
 Patch0027: 0027-multipathd-honor-MULTIPATH_SOCKET_NAME-environment-v.patch
 Patch0028: 0028-multipath-clean-up-find_multipaths-documentation.patch
 Patch0029: 0029-multipathd-Add-multipathd-man-page-section-about-soc.patch
+Patch0030: 0030-multipathd-monitor-new-multipath-dev-even-if-we-can-.patch
+Patch0031: 0031-libmultipath-add-helper-function-check_path_wwid_cha.patch
+Patch0032: 0032-multipathd-re-add-paths-skipped-because-they-were-of.patch
+Patch0033: 0033-multipath-tools-add-HPE-MSA-Gen7-2070-2072-to-hwtabl.patch
+Patch0034: 0034-libmultipath-fix-crash-in-print_foreign_topology.patch
 
 # runtime
 Requires: %{name}-libs = %{version}-%{release}
@@ -248,11 +253,35 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
-* Wed Nar 12 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-6.2
-- Fix multipath_conf_syntax OSCI test.
-- Related: RHEL-82194
+* Sat Sep 13 2025 Lin Li <lilin@redhat.com> - 0.9.9-12
+Add 0034-libmultipath-fix-crash-in-print_foreign_topology.patch
+  * Fixes RHEL-107436 ("Running multipath -ll on system with "enable_foreign
+    nvme" results in segfault")
+Resolves: RHEL-107436
 
-* Thu Mar  6 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-6.1
+* Mon Jul 14 2025 Filip Suba <fsuba@redhat.com> - 0.9.9-11
+- Add 0033-multipath-tools-add-HPE-MSA-Gen7-2070-2072-to-hwtabl.patch
+  * Fixes RHEL-103112 ("Update multipath builtin config to add new
+    device defaults [rhel-10]")
+- Resolves: RHEL-103112
+
+* Fri Apr 18 2025 Filip Suba <fsuba@redhat.com> - 0.9.9-10
+- Migrate gating tests from STI to tmt
+- Related: RHEL-82535
+
+* Wed Apr 16 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-9
+- Add 0030-multipathd-monitor-new-multipath-dev-even-if-we-can-.patch
+- Add 0031-libmultipath-add-helper-function-check_path_wwid_cha.patch
+- Add 0032-multipathd-re-add-paths-skipped-because-they-were-of.patch
+  * Fixes RHEL-82535 ("multipathd does not monitor multipath devices
+    created externally while there are offline paths.")
+- Resolves: RHEL-82535
+
+* Wed Mar 12 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-8
+- Fix multipath_conf_syntax OSCI test.
+- Related: RHEL-82180
+
+* Thu Mar  6 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-7
 - Add 0018-multipath-tools-move-DEFAULT_SOCKET-definition-into-.patch
 - Add 0019-multipath-tools-add-helper-mpath_fill_sockaddr__.patch
 - Add 0020-libmpathutil-add-support-for-Unix-pathname-sockets.patch
@@ -265,9 +294,9 @@ fi
 - Add 0027-multipathd-honor-MULTIPATH_SOCKET_NAME-environment-v.patch
 - Add 0028-multipath-clean-up-find_multipaths-documentation.patch
 - Add 0029-multipathd-Add-multipathd-man-page-section-about-soc.patch
-  * Fixes RHEL-82194 ("RFE: Enable multipathd to communicate with a
+  * Fixes RHEL-82180 ("RFE: Enable multipathd to communicate with a
     process in another network namespace")
-- Resolves: RHEL-82194
+- Resolves: RHEL-82180
 
 * Thu Jan  9 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-6
 - Add 0017-libmultipath-foreign-fix-memory-leak-in-nvme-foreign.patch

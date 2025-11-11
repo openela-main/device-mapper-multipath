@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 13 Mar 2025 16:08:45 -0400
+Subject: [PATCH] multipath: clean up find_multipaths value names
+
+The preferred term is "on" instead of "yes".
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipath/mpathconf        | 14 +++++++-------
+ multipath/multipath.conf.5 | 14 ++++++++------
+ 2 files changed, 15 insertions(+), 13 deletions(-)
+
+diff --git a/multipath/mpathconf b/multipath/mpathconf
+index 319664b1..ce430075 100644
+--- a/multipath/mpathconf
++++ b/multipath/mpathconf
+@@ -31,7 +31,7 @@ DEFAULT_CONFIG="# device-mapper-multipath configuration file
+ 
+ defaults {
+ 	user_friendly_names yes
+-	find_multipaths yes
++	find_multipaths on
+ }"
+ 
+ CONFIGFILE="/etc/multipath.conf"
+@@ -49,7 +49,7 @@ function usage
+ 	echo "Disable: --disable"
+ 	echo "Only allow certain wwids (instead of enable): --allow <WWID>"
+ 	echo "Set user_friendly_names (Default y): --user_friendly_names <y|n>"
+-	echo "Set find_multipaths (Default y): --find_multipaths <yes|no|strict|greedy|smart>"
++	echo "Set find_multipaths (Default on): --find_multipaths <on|yes|y|off|no|n|strict|greedy|smart>"
+ 	echo "Set default property blacklist (Default n): --property_blacklist <y|n>"
+ 	echo "Set enable_foreign to show foreign devices (Default n): --enable_foreign <y|n>"
+ 	echo "Set recheck_wwid (Defaut n): --recheck_wwid <y|n>"
+@@ -253,11 +253,11 @@ function validate_args
+ 		exit 1
+ 	fi
+ 	if [ "$FIND" = "y" ]; then
+-		FIND="yes"
++		FIND="on"
+ 	elif [ "$FIND" = "n" ]; then
+-		FIND="no"
+-	elif [ -n "$FIND" ] && [ "$FIND" != "yes" -a "$FIND" != "no" -a "$FIND" != "strict" -a "$FIND" != "greedy" -a "$FIND" != "smart" ]; then
+-		echo "--find_multipaths must be one of 'yes' 'no' 'strict' 'greedy' or 'smart'"
++		FIND="off"
++	elif [ -n "$FIND" ] && [ "$FIND" != "on" -a "$FIND" != "yes" -a "$FIND" != "off" -a "$FIND" != "no" -a "$FIND" != "strict" -a "$FIND" != "greedy" -a "$FIND" != "smart" ]; then
++		echo "--find_multipaths must be one of 'on' 'yes' 'y' 'off' 'no' 'n' 'strict' 'greedy' or 'smart'"
+ 		exit 1
+ 	fi
+ 	if [ -n "$PROPERTY" ] && [ "$PROPERTY" != "y" -a "$PROPERTY" != "n" ]; then
+@@ -422,7 +422,7 @@ if [ -n "$SHOW_STATUS" ]; then
+ 		echo "multipath is disabled"
+ 	fi
+ 	if [ -z "$HAVE_FIND" ]; then
+-		echo "find_multipaths is no"
++		echo "find_multipaths is off"
+ 	else
+ 		echo "find_multipaths is $HAVE_FIND"
+ 	fi
+diff --git a/multipath/multipath.conf.5 b/multipath/multipath.conf.5
+index 10eddc0c..8684bd63 100644
+--- a/multipath/multipath.conf.5
++++ b/multipath/multipath.conf.5
+@@ -1159,22 +1159,24 @@ listed in the \fBwwids_file\fR. Users can manually set up multipath maps using t
+ \fBmultipathd add map\fR command. Once set up manually, the map is
+ remembered in the wwids file and will be set up automatically in the future.
+ .TP
+-.I no
++.I off
+ Multipath behaves like \fBstrict\fR. Multipathd behaves like \fBgreedy\fR.
++\fIno\fR or \fI0\fR is accepted as an alias for \fIoff\fR.
+ .TP
+-.I yes
++.I on
+ Both multipathd and multipath treat a device as multipath device if the
+ conditions for \fBstrict\fR are met, or if at least two non-blacklisted paths
+-with the same WWID have been detected.
++with the same WWID have been detected. \fIyes\fR or \fI1\fR is accepted as an
++alias for \fIon\fR.
+ .TP
+ .I greedy
+ Both multipathd and multipath treat every non-blacklisted device as multipath
+ device path.
+ .TP
+ .I smart
+-This differs from \fIfind_multipaths yes\fR only in
++This differs from \fIfind_multipaths on\fR only in
+ the way it treats new devices for which only one path has been
+-detected yet. When such a device is first encounted in udev rules, it is
++detected yet. When such a device is first encountered in udev rules, it is
+ treated as a multipath device. multipathd waits whether additional paths with
+ the same WWID appears. If that happens, it sets up a multipath map. If it
+ doesn\'t happen until a
+@@ -1184,7 +1186,7 @@ as non-multipath and passed on to upper layers.
+ \fBNote:\fR this may cause delays during device detection if
+ there are single-path devices which aren\'t blacklisted.
+ .TP
+-The default is: \fBstrict\fR
++The default is: \fBoff\fR
+ .RE
+ .
+ .

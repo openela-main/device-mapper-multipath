@@ -1,6 +1,6 @@
 Name:    device-mapper-multipath
 Version: 0.8.7
-Release: 35%{?dist}.1
+Release: 39%{?dist}
 Summary: Tools to manage multipath devices using device-mapper
 License: GPLv2
 URL:     http://christophe.varoqui.free.fr/
@@ -149,6 +149,16 @@ Patch0136: 0136-multipathd-listen-on-pathname-and-abstract-socket-by.patch
 Patch0137: 0137-libmpathcmd-try-both-abstract-and-pathname-sockets.patch
 Patch0138: 0138-libmpathcmd-honor-MULTIPATH_SOCKET_NAME-environment-.patch
 Patch0139: 0139-multipathd-honor-MULTIPATH_SOCKET_NAME-environment-v.patch
+Patch0140: 0140-multipath-clean-up-find_multipaths-value-names.patch
+Patch0141: 0141-multipathd-Add-multipathd-man-page-section-about-soc.patch
+Patch0142: 0142-multipathd-monitor-new-multipath-dev-even-if-we-can-.patch
+Patch0143: 0143-libmultipath-add-helper-function-check_path_wwid_cha.patch
+Patch0144: 0144-multipathd-re-add-paths-skipped-because-they-were-of.patch
+Patch0145: 0145-multipath-tools-add-DellEMC-ME4-PowerVault-ME4-to-ha.patch
+Patch0146: 0146-multipath-tools-add-HPE-as-vendor-for-OPEN-XP8-array.patch
+Patch0147: 0147-multipath-tools-add-HP-HSVX740-to-hwtable.patch
+Patch0148: 0148-multipath-tools-add-DellEMC-ME5-PowerVault-ME5-to-ha.patch
+Patch0149: 0149-multipath-tools-add-HPE-MSA-Gen7-2070-2072-to-hwtabl.patch
 
 
 # runtime
@@ -352,7 +362,33 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
-* Tue Mar  4 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-35.1
+* Mon Jul 14 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-39
+- Add 0145-multipath-tools-add-DellEMC-ME4-PowerVault-ME4-to-ha.patch
+- Add 0146-multipath-tools-add-HPE-as-vendor-for-OPEN-XP8-array.patch
+- Add 0147-multipath-tools-add-HP-HSVX740-to-hwtable.patch
+- Add 0148-multipath-tools-add-DellEMC-ME5-PowerVault-ME5-to-ha.patch
+- Add 0149-multipath-tools-add-HPE-MSA-Gen7-2070-2072-to-hwtabl.patch
+  * Fixes RHEL-103109 ("Update multipath builtin config to add new
+    device defaults")
+- Resolves: RHEL-103109
+
+* Thu Apr 17 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-38
+- Add 0142-multipathd-monitor-new-multipath-dev-even-if-we-can-.patch
+- Add 0143-libmultipath-add-helper-function-check_path_wwid_cha.patch
+- Add 0144-multipathd-re-add-paths-skipped-because-they-were-of.patch
+  * Fixes RHEL-82534 ("multipathd does not monitor multipath devices
+    created externally while there are offline paths.")
+- Resolves: RHEL-82534
+
+* Thu Mar 13 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-37
+- Add 0140-multipath-clean-up-find_multipaths-value-names.patch
+- Add 0141-multipathd-Add-multipathd-man-page-section-about-soc.patch
+  * Fixes RHEL-82307 ("There is no man page for RFE: Enable multipathd
+    to communicate with a process in another network namespace")
+- Fix multipath_conf_syntax OSCI test.
+- Resolves: RHEL-82307
+
+* Tue Mar  4 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-36
 - Add 0128-multipath-tools-move-DEFAULT_SOCKET-definition-into-.patch
 - Add 0129-multipath-tools-add-helper-mpath_fill_sockaddr__.patch
 - Add 0130-libmpathutil-add-support-for-Unix-pathname-sockets.patch
@@ -365,9 +401,9 @@ fi
 - Add 0137-libmpathcmd-try-both-abstract-and-pathname-sockets.patch
 - Add 0138-libmpathcmd-honor-MULTIPATH_SOCKET_NAME-environment-.patch
 - Add 0139-multipathd-honor-MULTIPATH_SOCKET_NAME-environment-v.patch
-  * Fixes RHEL-80352 ("RFE: Enable multipathd to communicate with a
+  * Fixes RHEL-78758 ("RFE: Enable multipathd to communicate with a
     process in another network namespace")
-- Resolves: RHEL-80352
+- Resolves: RHEL-78758
 
 * Thu Jan  9 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-35
 - Add 0124-libmultipath-add-missing-assert-to-checkers.c.patch

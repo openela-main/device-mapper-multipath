@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Wed, 2 Apr 2025 19:13:20 -0400
+Subject: [PATCH] libmultipath: add helper function check_path_wwid_change
+
+Wrap some code from select_recheck_wwid() in a helper function. A future
+patch will call this code from a different function.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmultipath/discovery.c | 13 ++++++++++++-
+ libmultipath/discovery.h |  2 +-
+ libmultipath/propsel.c   |  4 +---
+ 3 files changed, 14 insertions(+), 5 deletions(-)
+
+diff --git a/libmultipath/discovery.c b/libmultipath/discovery.c
+index 672c783b..22d114b3 100644
+--- a/libmultipath/discovery.c
++++ b/libmultipath/discovery.c
+@@ -2184,7 +2184,7 @@ static ssize_t uid_fallback(struct path *pp, int path_state,
+ 	return len;
+ }
+ 
+-bool has_uid_fallback(struct path *pp)
++static bool has_uid_fallback(const struct path *pp)
+ {
+ 	/*
+ 	 * Falling back to direct WWID determination is dangerous
+@@ -2205,6 +2205,17 @@ bool has_uid_fallback(struct path *pp)
+ 		  !strcmp(pp->uid_attribute, ""))));
+ }
+ 
++bool can_recheck_wwid(const struct path *pp)
++{
++	/*
++	 * check_path_wwid_change() only works for scsi devices, and it
++	 * is only guaranteed to give the same WWID if the path uses
++	 * the default uid_attribute
++	 */
++	return (pp->bus == SYSFS_BUS_SCSI && !pp->getuid &&
++		has_uid_fallback(pp));
++}
++
+ int
+ get_uid (struct path * pp, int path_state, struct udev_device *udev,
+ 	 int allow_fallback)
+diff --git a/libmultipath/discovery.h b/libmultipath/discovery.h
+index c2a88686..c7f1becd 100644
+--- a/libmultipath/discovery.h
++++ b/libmultipath/discovery.h
+@@ -54,7 +54,7 @@ ssize_t sysfs_get_inquiry(struct udev_device *udev,
+ 			  unsigned char *buff, size_t len);
+ int sysfs_get_asymmetric_access_state(struct path *pp,
+ 				      char *buff, int buflen);
+-bool has_uid_fallback(struct path *pp);
++bool can_recheck_wwid(const struct path *pp);
+ int get_uid(struct path * pp, int path_state, struct udev_device *udev,
+ 	    int allow_fallback);
+ bool is_vpd_page_supported(int fd, int pg);
+diff --git a/libmultipath/propsel.c b/libmultipath/propsel.c
+index be781ff7..0b6e22c1 100644
+--- a/libmultipath/propsel.c
++++ b/libmultipath/propsel.c
+@@ -672,9 +672,7 @@ int select_recheck_wwid(struct config *conf, struct path * pp)
+ 	pp_set_conf(recheck_wwid);
+ 	pp_set_default(recheck_wwid, DEFAULT_RECHECK_WWID);
+ out:
+-	if (pp->recheck_wwid == RECHECK_WWID_ON &&
+-	    (pp->bus != SYSFS_BUS_SCSI || pp->getuid != NULL ||
+-	     !has_uid_fallback(pp))) {
++	if (pp->recheck_wwid == RECHECK_WWID_ON && !can_recheck_wwid(pp)) {
+ 		pp->recheck_wwid = RECHECK_WWID_OFF;
+ 		origin = "(setting: unsupported by device type/config)";
+ 	}

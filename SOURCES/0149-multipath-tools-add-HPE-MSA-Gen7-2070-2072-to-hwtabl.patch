@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xose Vazquez Perez <xose.vazquez@gmail.com>
+Date: Thu, 5 Dec 2024 23:49:16 +0100
+Subject: [PATCH] multipath-tools: add HPE MSA Gen7 (2070/2072) to hwtable
+
+https://support.hpe.com/connect/s/product?kmpmoid=1014856412
+
+Just guessing, confirmation from manufacturer is needed.
+
+Cc: Jon Paul <Jon.Paul@hpe.com>
+Cc: Martin Wilck <mwilck@suse.com>
+Cc: Benjamin Marzinski <bmarzins@redhat.com>
+Cc: Christophe Varoqui <christophe.varoqui@opensvc.com>
+Cc: DM-DEVEL ML <dm-devel@lists.linux.dev>
+Signed-off-by: Xose Vazquez Perez <xose.vazquez@gmail.com>
+Acked-by: Jon Paul <jon.paul@hpe.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/hwtable.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/libmultipath/hwtable.c b/libmultipath/hwtable.c
+index e5575a31..2d359829 100644
+--- a/libmultipath/hwtable.c
++++ b/libmultipath/hwtable.c
+@@ -189,9 +189,9 @@ static struct hwentry default_hw[] = {
+ 		.prio_name     = PRIO_ALUA,
+ 	},
+ 	{
+-		/* MSA 1040, 1050, 1060, 2040, 2050 and 2060 families */
++		/* MSA 1040, 1050, 1060, 2040, 2050, 2060 and 2070 families */
+ 		.vendor        = "(HP|HPE)",
+-		.product       = "MSA [12]0[456]0 (SAN|SAS|FC|iSCSI)",
++		.product       = "MSA [12]0[4567]0 (SAN|SAS|FC|iSCSI)",
+ 		.pgpolicy      = GROUP_BY_PRIO,
+ 		.pgfailback    = -FAILBACK_IMMEDIATE,
+ 		.no_path_retry = 18,

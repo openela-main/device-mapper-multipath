@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Wed, 2 Apr 2025 19:13:19 -0400
+Subject: [PATCH] multipathd: monitor new multipath dev even if we can't update
+ it
+
+If a multipath device was created by the multipath command, multipathd
+might not agree with how the device was created. ev_add_map() can reload
+the device with a different table by calling add_map_without_path() ->
+update_map(). If this reloading of the map failed, multipathd was simply
+ignoring the multipath device, even though it still existed.
+
+One way that reloading can fail is if a path that multipathd already has
+initialized goes offline. If a multipath device is created by the
+multipath command while the path is offline, it will not use the offline
+path, since multipath won't be able to get the necessary pathinfo.
+However, multipathd will already have the pathinfo for the path, and may
+not even know that it's offline, since the path is an orphan. When it
+tries to reload the device, it will include the offline path, and the
+reload will fail.
+
+Instead of ignoring the device if it can't reload it, multipathd should
+just montior it as it is. When the path device is no longer offline, it
+can be added back to the multipath device by calling
+"multipathd reconfigure" or "multipathd add path <path>".
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck  <mwilck@suse.com>
+---
+ multipathd/main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 820d4e68..c5f458b9 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -593,7 +593,7 @@ retry:
+ 	}
+ 
+ fail:
+-	if (new_map && (retries < 0 || wait_for_events(mpp, vecs))) {
++	if (new_map && wait_for_events(mpp, vecs)) {
+ 		condlog(0, "%s: failed to create new map", mpp->alias);
+ 		remove_map(mpp, vecs->pathvec, vecs->mpvec);
+ 		return 1;

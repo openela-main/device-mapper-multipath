@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xose Vazquez Perez <xose.vazquez@gmail.com>
+Date: Thu, 24 Feb 2022 22:24:39 +0100
+Subject: [PATCH] multipath-tools: add HP/HSVX740 to hwtable
+
+Info from: https://community.hpe.com/hpeb/attachments/hpeb/itrc-248/61618/1/HP_DM_MP_Guide.pdf
+
+Cc: Martin Wilck <mwilck@suse.com>
+Cc: Benjamin Marzinski <bmarzins@redhat.com>
+Cc: Christophe Varoqui <christophe.varoqui@opensvc.com>
+Cc: DM-DEVEL ML <dm-devel@redhat.com>
+Signed-off-by: Xose Vazquez Perez <xose.vazquez@gmail.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/hwtable.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/libmultipath/hwtable.c b/libmultipath/hwtable.c
+index d556f25d..487bce8e 100644
+--- a/libmultipath/hwtable.c
++++ b/libmultipath/hwtable.c
+@@ -200,7 +200,7 @@ static struct hwentry default_hw[] = {
+ 	{
+ 		/* SAN Virtualization Services Platform */
+ 		.vendor        = "HP",
+-		.product       = "HSVX700",
++		.product       = "(HSVX700|HSVX740)",
+ 		.hwhandler     = "1 alua",
+ 		.pgpolicy      = GROUP_BY_PRIO,
+ 		.pgfailback    = -FAILBACK_IMMEDIATE,

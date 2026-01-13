@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 25 Aug 2025 14:09:29 -0400
+Subject: [PATCH] libmpathpersist: Don't try release workaround for invalid
+ type
+
+When trying to release a reservation, if the user specified the wrong
+reservation type, libmpathpersist would try to preempt the reservation,
+because the reservation key matched the device key, but it was not
+removed.  In this case, the preemption would also fail because it also
+requires a matching type.
+
+Check if the reservation type matches, to avoid attempting the
+workaround in this case.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmpathpersist/mpath_persist_int.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index de757c09..e5ae0836 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -576,6 +576,7 @@ static int mpath_prout_rel(struct multipath *mpp,int rq_servact, int rq_scope,
+ 	uint16_t udev_flags = (mpp->skip_kpartx) ? MPATH_UDEV_NO_KPARTX_FLAG : 0;
+ 	bool did_resume = false;
+ 	bool all_threads_failed;
++	unsigned int scope_type;
+ 
+ 	if (!mpp)
+ 		return MPATH_PR_DMMP_ERROR;
+@@ -671,6 +672,13 @@ static int mpath_prout_rel(struct multipath *mpp,int rq_servact, int rq_scope,
+ 		return MPATH_PR_SUCCESS;
+ 	}
+ 
++	scope_type = resp.prin_descriptor.prin_readresv.scope_type;
++	if ((scope_type & MPATH_PR_TYPE_MASK) != rq_type) {
++		condlog(2, "%s: --prout_type %u doesn't match reservation %u",
++			mpp->wwid, rq_type, scope_type & MPATH_PR_TYPE_MASK);
++		return MPATH_PR_RESERV_CONFLICT;
++	}
++
+ 	condlog (2, "%s: Path holding reservation is not available.", mpp->wwid);
+ 	/*
+ 	 * Cannot free the reservation because the path that is holding it

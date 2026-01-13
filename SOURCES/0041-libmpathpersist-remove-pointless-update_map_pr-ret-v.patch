@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 10 Jul 2025 14:10:49 -0400
+Subject: [PATCH] libmpathpersist: remove pointless update_map_pr ret value
+ code
+
+Don't set ret to MPATH_PR_SUCCESS, after the code just made sure that
+it was already set to MPATH_PR_SUCCESS.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmpathpersist/mpath_persist_int.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index 6233e6b0..39bfc953 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -765,8 +765,6 @@ int update_map_pr(struct multipath *mpp)
+ 		goto out;
+ 	}
+ 
+-	ret = MPATH_PR_SUCCESS;
+-
+ 	if (resp->prin_descriptor.prin_readkeys.additional_length == 0 )
+ 	{
+ 		condlog(was_set ? 1 : 3,

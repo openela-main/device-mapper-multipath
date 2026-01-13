@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 10 Jul 2025 14:10:47 -0400
+Subject: [PATCH] libmpathpersist: remove uneeded wrapper function.
+
+mpath_send_prin_activepath() just calls prin_do_scsi_ioctl() with exactly
+the same arguments that it is passed, and returns the same return. remove
+it.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmpathpersist/mpath_persist_int.c | 14 +-------------
+ 1 file changed, 1 insertion(+), 13 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index 128671e5..fb1d0081 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -49,17 +49,6 @@ struct threadinfo {
+ 	struct prout_param param;
+ };
+ 
+-static int mpath_send_prin_activepath (char * dev, int rq_servact,
+-				struct prin_resp * resp, int noisy)
+-{
+-
+-	int rc;
+-
+-	rc = prin_do_scsi_ioctl(dev, rq_servact, resp,  noisy);
+-
+-	return (rc);
+-}
+-
+ static int mpath_prin_activepath (struct multipath *mpp, int rq_servact,
+ 	struct prin_resp * resp, int noisy)
+ {
+@@ -80,8 +69,7 @@ static int mpath_prin_activepath (struct multipath *mpp, int rq_servact,
+ 
+ 			condlog(3, "%s: sending pr in command to %s ",
+ 				mpp->wwid, pp->dev);
+-			ret = mpath_send_prin_activepath(pp->dev, rq_servact,
+-							 resp, noisy);
++			ret = prin_do_scsi_ioctl(pp->dev, rq_servact, resp, noisy);
+ 			switch(ret)
+ 			{
+ 				case MPATH_PR_SUCCESS:

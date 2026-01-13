@@ -1,0 +1,151 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Fri, 25 Jul 2025 23:58:53 -0400
+Subject: [PATCH] libmpathpersist: update reservation key before checking paths
+
+There is a race condition when changing reservation keys where a failed
+path could come back online after libmpathpersist checks the paths, but
+before it updates the reservation key. In this case, the path would come
+up and get reregistered with the old key by multipathd, and
+libmpathpersist would not update its key, because the path was down
+when it checked.
+
+To fix this, check the paths after updating the key, so any path that
+comes up after getting checked will use the updated key.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmpathpersist/mpath_persist_int.c | 80 ++++++++++++-----------------
+ 1 file changed, 34 insertions(+), 46 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index 302bebc2..d498e69e 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -110,39 +110,18 @@ void *mpath_alloc_prin_response(int prin_sa)
+ 	return ptr;
+ }
+ 
+-static int get_mpvec(vector curmp, vector pathvec, char *refwwid)
++static int get_path_info(struct multipath *mpp, vector pathvec)
+ {
+-	int i;
+-	struct multipath *mpp;
+-
+-	vector_foreach_slot (curmp, mpp, i){
+-		/*
+-		 * discard out of scope maps
+-		 */
+-		if (!mpp->alias) {
+-			condlog(0, "%s: map with empty alias!", __func__);
+-			continue;
+-		}
+-
+-		if (mpp->pg != NULL)
+-			/* Already seen this one */
+-			continue;
+-
+-		if (refwwid && strncmp (mpp->alias, refwwid, WWID_SIZE - 1))
+-			continue;
+-
+-		if (update_multipath_table(mpp, pathvec, DI_CHECKER) != DMP_OK ||
+-		    update_mpp_paths(mpp, pathvec)) {
+-			condlog(1, "error parsing map %s", mpp->wwid);
+-			remove_map(mpp, pathvec, curmp);
+-			i--;
+-		} else
+-			extract_hwe_from_path(mpp);
++	if (update_multipath_table(mpp, pathvec, DI_CHECKER) != DMP_OK ||
++	    update_mpp_paths(mpp, pathvec)) {
++		condlog(0, "error parsing map %s", mpp->wwid);
++		return MPATH_PR_DMMP_ERROR;
+ 	}
++	extract_hwe_from_path(mpp);
+ 	return MPATH_PR_SUCCESS ;
+ }
+ 
+-static int mpath_get_map(vector curmp, vector pathvec, int fd, char **palias,
++static int mpath_get_map(vector curmp, int fd, char **palias,
+ 			 struct multipath **pmpp)
+ {
+ 	int ret = MPATH_PR_DMMP_ERROR;
+@@ -178,12 +157,6 @@ static int mpath_get_map(vector curmp, vector pathvec, int fd, char **palias,
+ 		goto out;
+ 	}
+ 
+-	/* get info of all paths from the dm device     */
+-	if (get_mpvec(curmp, pathvec, alias)){
+-		condlog(0, "%s: failed to get device info.", alias);
+-		goto out;
+-	}
+-
+ 	mpp = find_mp_by_alias(curmp, alias);
+ 
+ 	if (!mpp) {
+@@ -210,7 +183,11 @@ int do_mpath_persistent_reserve_in(vector curmp, vector pathvec,
+ 	struct multipath *mpp;
+ 	int ret;
+ 
+-	ret = mpath_get_map(curmp, pathvec, fd, NULL, &mpp);
++	ret = mpath_get_map(curmp, fd, NULL, &mpp);
++	if (ret != MPATH_PR_SUCCESS)
++		return ret;
++
++	ret = get_path_info(mpp, pathvec);
+ 	if (ret != MPATH_PR_SUCCESS)
+ 		return ret;
+ 
+@@ -747,24 +724,14 @@ int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+ 	bool unregistering, preempting_reservation = false;
+ 	bool updated_prkey = false;
+ 
+-	ret = mpath_get_map(curmp, pathvec, fd, &alias, &mpp);
++	ret = mpath_get_map(curmp, fd, &alias, &mpp);
+ 	if (ret != MPATH_PR_SUCCESS)
+ 		return ret;
+ 
+ 	conf = get_multipath_config();
+ 	select_reservation_key(conf, mpp);
+-	select_all_tg_pt(conf, mpp);
+-	/*
+-	 * If a device preempts itself, it will need to suspend and resume.
+-	 * Set mpp->skip_kpartx to make sure we set the flags to skip kpartx
+-	 * if necessary, when doing this.
+-	 */
+-	select_skip_kpartx(conf, mpp);
+ 	put_multipath_config(conf);
+ 
+-	if (rq_servact == MPATH_PROUT_REG_IGN_SA)
+-		set_ignored_key(mpp, paramp->key);
+-
+ 	unregistering = (memcmp(&zerokey, paramp->sa_key, 8) == 0);
+ 	if (mpp->prkey_source == PRKEY_SOURCE_FILE &&
+ 	    (rq_servact == MPATH_PROUT_REG_IGN_SA ||
+@@ -822,6 +789,27 @@ int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+ 		}
+ 	}
+ 
++	ret = get_path_info(mpp, pathvec);
++	if (ret != MPATH_PR_SUCCESS) {
++		if (updated_prkey)
++			update_prkey_flags(alias, get_be64(oldkey),
++					   mpp->sa_flags);
++		goto out1;
++	}
++
++	conf = get_multipath_config();
++	select_all_tg_pt(conf, mpp);
++	/*
++	 * If a device preempts itself, it will need to suspend and resume.
++	 * Set mpp->skip_kpartx to make sure we set the flags to skip kpartx
++	 * if necessary, when doing this.
++	 */
++	select_skip_kpartx(conf, mpp);
++	put_multipath_config(conf);
++
++	if (rq_servact == MPATH_PROUT_REG_IGN_SA)
++		set_ignored_key(mpp, paramp->key);
++
+ 	switch(rq_servact)
+ 	{
+ 	case MPATH_PROUT_REG_SA:

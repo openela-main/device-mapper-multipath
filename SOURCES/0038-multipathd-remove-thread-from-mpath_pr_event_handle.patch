@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 10 Jul 2025 14:10:46 -0400
+Subject: [PATCH] multipathd: remove thread from mpath_pr_event_handle
+
+mpath_pr_event_handle() creates a separate thread to do the persistent
+reservation work, but it doesn't take any advantage of the work being
+done in another thread. Merge mpath_pr_event_handle() and
+mpath_pr_event_handler_fn() into a single function with no separate
+thread.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ multipathd/main.c | 50 +++++++++++------------------------------------
+ 1 file changed, 11 insertions(+), 39 deletions(-)
+
+diff --git a/multipathd/main.c b/multipathd/main.c
+index a565ade5..04ca47d1 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -89,8 +89,7 @@
+ #define CMDSIZE 160
+ #define MSG_SIZE 32
+ 
+-int mpath_pr_event_handle(struct path *pp);
+-void * mpath_pr_event_handler_fn (void * );
++static void mpath_pr_event_handle(struct path *pp);
+ 
+ #define LOG_MSG(lvl, pp)					\
+ do {								\
+@@ -3945,17 +3944,24 @@ main (int argc, char *argv[])
+ 		return (child(NULL));
+ }
+ 
+-void *  mpath_pr_event_handler_fn (void * pathp )
++static void mpath_pr_event_handle(struct path *pp)
+ {
+ 	struct multipath * mpp;
+ 	unsigned int i;
+ 	int ret, isFound;
+-	struct path * pp = (struct path *)pathp;
+ 	struct prout_param_descriptor *param;
+ 	struct prin_resp *resp;
+ 
+-	rcu_register_thread();
+ 	mpp = pp->mpp;
++	if (pp->bus != SYSFS_BUS_SCSI) {
++		mpp->prflag = PRFLAG_UNSET;
++		return;
++	}
++
++	if (!get_be64(mpp->reservation_key)) {
++		mpp->prflag = PRFLAG_UNSET;
++		return;
++	}
+ 
+ 	resp = mpath_alloc_prin_response(MPATH_PRIN_RKEY_SA);
+ 	if (!resp){
+@@ -4022,38 +4028,4 @@ void *  mpath_pr_event_handler_fn (void * pathp )
+ out:
+ 	if (resp)
+ 		free(resp);
+-	rcu_unregister_thread();
+-	return NULL;
+-}
+-
+-int mpath_pr_event_handle(struct path *pp)
+-{
+-	pthread_t thread;
+-	int rc;
+-	pthread_attr_t attr;
+-	struct multipath * mpp;
+-
+-	if (pp->bus != SYSFS_BUS_SCSI)
+-		goto no_pr;
+-
+-	mpp = pp->mpp;
+-
+-	if (!get_be64(mpp->reservation_key))
+-		goto no_pr;
+-
+-	pthread_attr_init(&attr);
+-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+-
+-	rc = pthread_create(&thread, NULL , mpath_pr_event_handler_fn, pp);
+-	if (rc) {
+-		condlog(0, "%s: ERROR; return code from pthread_create() is %d", pp->dev, rc);
+-		return -1;
+-	}
+-	pthread_attr_destroy(&attr);
+-	rc = pthread_join(thread, NULL);
+-	return 0;
+-
+-no_pr:
+-	pp->mpp->prflag = PRFLAG_UNSET;
+-	return 0;
+ }

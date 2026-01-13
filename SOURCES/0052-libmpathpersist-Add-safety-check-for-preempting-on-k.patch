@@ -1,0 +1,444 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 10 Jul 2025 14:11:00 -0400
+Subject: [PATCH] libmpathpersist: Add safety check for preempting on key
+ change
+
+When a reservation key is changed from one non-zero value to another,
+libmpathpersist checks if the old key is still holding the reservation,
+and preempts it if it is. This was only safe if two nodes never share
+the same key. If a node uses the same key as another node that is
+holding the reservation, and switches keys so that it no longer matches,
+it will end up preempting the reservation. This is clearly unexpected
+behavior, and it can come about by a simple accident of registering a
+device with the wrong key, and then immediately fixing it.
+
+To handle this, add code to track if a device is the reservation holder
+to multipathd. multipathd now has three new commands "getprhold",
+"setprhold", and "unsetprhold". These commands work like the equivalent
+*prstatus commands. libmpathpersist calls setprhold on RESERVE commands
+and PREEMPT commands when the preempted key is holding the reservation
+and unsetprhold on RELEASE commands. Also, calling unsetprflag causes
+prhold to be unset as well, so CLEAR commands and REGISTER commands with
+a 0x0 service action key will also unset prhold. libmpathpersist() will
+also unset prhold if it notices that the device cannot be holding a
+reservation in preempt_missing_path().
+
+When a new multipath device is created, its initial prhold state is
+PR_UNKNOWN until it checks the current reservation, just like with
+prflag. If multipathd ever finds that a device's registration has been
+preempted or cleared in update_map_pr(), it unsets prhold, just like
+with prflag.
+
+Now, before libmpathpersist preempts a reservation when changing keys
+it also checks if multipathd thinks that the device is holding
+the reservation. If it does not, then libmpathpersist won't preempt
+the key. It will assume that another node is holding the reservation
+with the same key.
+
+I should note that this safety check only stops a node not holding the
+reservation from preempting the node holding the reservation. If the
+node holding the reservation changes its key, but it fails to change the
+resevation key, because that path is down or gone, it will still issue
+the preempt to move the reservation to a usable path, even if another
+node is using the same key. This will remove the registrations for that
+other node. It also will not work correctly if multipathd stops tracking
+a device for some reason. It's only a best-effort safety check.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmpathpersist/mpath_persist_int.c | 85 ++++++++++++++++++++++++-----
+ libmpathpersist/mpath_updatepr.c    | 19 ++++++-
+ libmpathpersist/mpathpr.h           |  2 +
+ libmultipath/structs.h              |  1 +
+ multipathd/callbacks.c              |  3 +
+ multipathd/cli.c                    |  4 +-
+ multipathd/cli.h                    |  3 +
+ multipathd/cli_handlers.c           | 46 ++++++++++++++++
+ multipathd/main.c                   | 34 +++++++++++-
+ 9 files changed, 179 insertions(+), 18 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index 679e82be..1948de8d 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -270,6 +270,10 @@ mpath_prout_common(struct multipath *mpp, int rq_servact, int rq_scope,
+  * holding the reservation on a path that couldn't get its key updated,
+  * either because it is down or no longer part of the multipath device,
+  * you need to preempt the reservation to a usable path with the new key
++ *
++ * Also, it's possible that the reservation was preempted, and the device
++ * is being re-registered. If it appears that is the case, clear
++ * mpp->prhold in multipathd.
+  */
+ void preempt_missing_path(struct multipath *mpp, uint8_t *key, uint8_t *sa_key,
+ 			  int noisy)
+@@ -282,12 +286,19 @@ void preempt_missing_path(struct multipath *mpp, uint8_t *key, uint8_t *sa_key,
+ 	int status;
+ 
+ 	/*
+-	 * If you previously didn't have a key registered or you didn't
+-	 * switch to a different key, there's no need to preempt. Also, you
+-	 * can't preempt if you no longer have a registered key
++	 * If you previously didn't have a key registered, you can't
++	 * be holding the reservation. Also, you can't preempt if you
++	 * no longer have a registered key
+ 	 */
+-	if (memcmp(key, zero, 8) == 0 || memcmp(sa_key, zero, 8) == 0 ||
+-	    memcmp(key, sa_key, 8) == 0)
++	if (memcmp(key, zero, 8) == 0 || memcmp(sa_key, zero, 8) == 0) {
++		update_prhold(mpp->alias, false);
++		return;
++	}
++	/*
++	 * If you didn't switch to a different key, there is no need to
++	 * preempt.
++	 */
++	if (memcmp(key, sa_key, 8) == 0)
+ 		return;
+ 
+ 	status = mpath_prin_activepath(mpp, MPATH_PRIN_RRES_SA, &resp, noisy);
+@@ -297,13 +308,29 @@ void preempt_missing_path(struct multipath *mpp, uint8_t *key, uint8_t *sa_key,
+ 		return;
+ 	}
+ 	/* If there is no reservation, there's nothing to preempt */
+-	if (!resp.prin_descriptor.prin_readresv.additional_length)
++	if (!resp.prin_descriptor.prin_readresv.additional_length) {
++		update_prhold(mpp->alias, false);
+ 		return;
++	}
+ 	/*
+ 	 * If there reservation is not held by the old key, you don't
+ 	 * want to preempt it
+ 	 */
+-	if (memcmp(key, resp.prin_descriptor.prin_readresv.key, 8) != 0)
++	if (memcmp(key, resp.prin_descriptor.prin_readresv.key, 8) != 0) {
++		/*
++		 * If reservation key doesn't match either the old or
++		 * the new key, then clear prhold.
++		 */
++		if (memcmp(sa_key, resp.prin_descriptor.prin_readresv.key, 8) != 0)
++			update_prhold(mpp->alias, false);
++		return;
++	}
++
++	/*
++	 * If multipathd doesn't think it is holding the reservation, don't
++	 * preempt it
++	 */
++	if (get_prhold(mpp->alias) != PR_SET)
+ 		return;
+ 	/* Assume this key is being held by an inaccessable path on this
+ 	 * node. libmpathpersist has never worked if multiple nodes share
+@@ -654,19 +681,36 @@ fail_resume:
+ 	return (status == MPATH_PR_RETRYABLE_ERROR) ? MPATH_PR_OTHER : status;
+ }
+ 
++static int reservation_key_matches(struct multipath *mpp, uint8_t *key, int noisy)
++{
++	struct prin_resp resp = {{{.prgeneration = 0}}};
++	int status;
++
++	status = mpath_prin_activepath(mpp, MPATH_PRIN_RRES_SA, &resp, noisy);
++	if (status != MPATH_PR_SUCCESS) {
++		condlog(0, "%s: pr in read reservation command failed.", mpp->wwid);
++		return YNU_UNDEF;
++	}
++	if (!resp.prin_descriptor.prin_readresv.additional_length)
++		return YNU_NO;
++	if (memcmp(key, resp.prin_descriptor.prin_readresv.key, 8) == 0)
++		return YNU_YES;
++	return YNU_NO;
++}
++
+ /*
+  * for MPATH_PROUT_REG_IGN_SA, we use the ignored paramp->key to store the
+- * currently registered key.
++ * currently registered key for use in preempt_missing_path(), but only if
++ * the key is holding the reservation.
+  */
+ static void set_ignored_key(struct multipath *mpp, uint8_t *key)
+ {
+ 	memset(key, 0, 8);
+ 	if (!get_be64(mpp->reservation_key))
+ 		return;
+-	if (get_prflag(mpp->alias) == PR_UNSET)
++	if (get_prhold(mpp->alias) == PR_UNSET)
+ 		return;
+-	update_map_pr(mpp, NULL);
+-	if (mpp->prflag != PR_SET)
++	if (reservation_key_matches(mpp, key, 0) == YNU_NO)
+ 		return;
+ 	memcpy(key, &mpp->reservation_key, 8);
+ }
+@@ -680,6 +724,7 @@ int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+ 	int ret;
+ 	uint64_t prkey;
+ 	struct config *conf;
++	bool preempting_reservation = false;
+ 
+ 	ret = mpath_get_map(curmp, pathvec, fd, &alias, &mpp);
+ 	if (ret != MPATH_PR_SUCCESS)
+@@ -729,9 +774,12 @@ int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+ 	case MPATH_PROUT_REG_IGN_SA:
+ 		ret= mpath_prout_reg(mpp, rq_servact, rq_scope, rq_type, paramp, noisy);
+ 		break;
+-	case MPATH_PROUT_RES_SA :
+-	case MPATH_PROUT_PREE_SA :
+-	case MPATH_PROUT_PREE_AB_SA :
++	case MPATH_PROUT_PREE_SA:
++	case MPATH_PROUT_PREE_AB_SA:
++		if (reservation_key_matches(mpp, paramp->sa_key, noisy) == YNU_YES)
++			preempting_reservation = true;
++		/* fallthrough */
++	case MPATH_PROUT_RES_SA:
+ 	case MPATH_PROUT_CLEAR_SA:
+ 		ret = mpath_prout_common(mpp, rq_servact, rq_scope, rq_type,
+ 					 paramp, noisy, NULL);
+@@ -759,6 +807,15 @@ int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+ 	case MPATH_PROUT_CLEAR_SA:
+ 		update_prflag(alias, 0);
+ 		update_prkey(alias, 0);
++		break;
++	case MPATH_PROUT_RES_SA:
++	case MPATH_PROUT_REL_SA:
++		update_prhold(alias, (rq_servact == MPATH_PROUT_RES_SA));
++		break;
++	case MPATH_PROUT_PREE_SA:
++	case MPATH_PROUT_PREE_AB_SA:
++		if (preempting_reservation)
++			update_prhold(alias, true);
+ 	}
+ out1:
+ 	free(alias);
+diff --git a/libmpathpersist/mpath_updatepr.c b/libmpathpersist/mpath_updatepr.c
+index c8fbe4a2..dd8dd48e 100644
+--- a/libmpathpersist/mpath_updatepr.c
++++ b/libmpathpersist/mpath_updatepr.c
+@@ -75,13 +75,13 @@ static int do_update_pr(char *alias, char *cmd, char *key)
+ 	return ret;
+ }
+ 
+-int get_prflag(char *mapname)
++static int do_get_pr(char *mapname, const char *cmd)
+ {
+ 	char str[256];
+ 	char *reply;
+ 	int prflag;
+ 
+-	snprintf(str, sizeof(str), "getprstatus map %s", mapname);
++	snprintf(str, sizeof(str), "%s map %s", cmd, mapname);
+ 	reply = do_pr(mapname, str);
+ 	if (!reply)
+ 		prflag = PR_UNKNOWN;
+@@ -96,11 +96,26 @@ int get_prflag(char *mapname)
+ 	return prflag;
+ }
+ 
++int get_prflag(char *mapname)
++{
++	return do_get_pr(mapname, "getprstatus");
++}
++
++int get_prhold(char *mapname)
++{
++	return do_get_pr(mapname, "getprhold");
++}
++
+ int update_prflag(char *mapname, int set) {
+ 	return do_update_pr(mapname, (set)? "setprstatus" : "unsetprstatus",
+ 			    NULL);
+ }
+ 
++int update_prhold(char *mapname, bool set)
++{
++	return do_update_pr(mapname, (set) ? "setprhold" : "unsetprhold", NULL);
++}
++
+ int update_prkey_flags(char *mapname, uint64_t prkey, uint8_t sa_flags) {
+ 	char str[256];
+ 
+diff --git a/libmpathpersist/mpathpr.h b/libmpathpersist/mpathpr.h
+index 614be530..b668ef58 100644
+--- a/libmpathpersist/mpathpr.h
++++ b/libmpathpersist/mpathpr.h
+@@ -9,6 +9,8 @@
+ int update_prflag(char *mapname, int set);
+ int update_prkey_flags(char *mapname, uint64_t prkey, uint8_t sa_flags);
+ int get_prflag(char *mapname);
++int get_prhold(char *mapname);
++int update_prhold(char *mapname, bool set);
+ #define update_prkey(mapname, prkey) update_prkey_flags(mapname, prkey, 0)
+ 
+ #endif
+diff --git a/libmultipath/structs.h b/libmultipath/structs.h
+index 24135aa6..6d0cd867 100644
+--- a/libmultipath/structs.h
++++ b/libmultipath/structs.h
+@@ -489,6 +489,7 @@ struct multipath {
+ 	struct be64 reservation_key;
+ 	uint8_t sa_flags;
+ 	int prflag;
++	int prhold;
+ 	int all_tg_pt;
+ 	struct gen_multipath generic_mp;
+ 	bool fpin_must_reload;
+diff --git a/multipathd/callbacks.c b/multipathd/callbacks.c
+index fb87b280..b6b57f45 100644
+--- a/multipathd/callbacks.c
++++ b/multipathd/callbacks.c
+@@ -69,4 +69,7 @@ void init_handler_callbacks(void)
+ 	set_handler_callback(VRB_UNSETMARGINAL | Q1_PATH, HANDLER(cli_unset_marginal));
+ 	set_handler_callback(VRB_UNSETMARGINAL | Q1_MAP,
+ 			     HANDLER(cli_unset_all_marginal));
++	set_handler_callback(VRB_GETPRHOLD | Q1_MAP, HANDLER(cli_getprhold));
++	set_handler_callback(VRB_SETPRHOLD | Q1_MAP, HANDLER(cli_setprhold));
++	set_handler_callback(VRB_UNSETPRHOLD | Q1_MAP, HANDLER(cli_unsetprhold));
+ }
+diff --git a/multipathd/cli.c b/multipathd/cli.c
+index 0c89b7cd..bccdda48 100644
+--- a/multipathd/cli.c
++++ b/multipathd/cli.c
+@@ -224,7 +224,9 @@ load_keys (void)
+ 	r += add_key(keys, "setmarginal", VRB_SETMARGINAL, 0);
+ 	r += add_key(keys, "unsetmarginal", VRB_UNSETMARGINAL, 0);
+ 	r += add_key(keys, "all", KEY_ALL, 0);
+-
++	r += add_key(keys, "getprhold", VRB_GETPRHOLD, 0);
++	r += add_key(keys, "setprhold", VRB_SETPRHOLD, 0);
++	r += add_key(keys, "unsetprhold", VRB_UNSETPRHOLD, 0);
+ 
+ 	if (r) {
+ 		free_keys(keys);
+diff --git a/multipathd/cli.h b/multipathd/cli.h
+index c6b79c9d..925575ad 100644
+--- a/multipathd/cli.h
++++ b/multipathd/cli.h
+@@ -38,6 +38,9 @@ enum {
+ 	VRB_UNSETMARGINAL	= 23,
+ 	VRB_SHUTDOWN		= 24,
+ 	VRB_QUIT		= 25,
++	VRB_GETPRHOLD		= 26,
++	VRB_SETPRHOLD		= 27,
++	VRB_UNSETPRHOLD		= 28,
+ 
+ 	/* Qualifiers, values must be different from verbs */
+ 	KEY_PATH		= 65,
+diff --git a/multipathd/cli_handlers.c b/multipathd/cli_handlers.c
+index 8e2e2cea..94d0b63f 100644
+--- a/multipathd/cli_handlers.c
++++ b/multipathd/cli_handlers.c
+@@ -1304,6 +1304,10 @@ cli_unsetprstatus(void * v, struct strbuf *reply, void * data)
+ 		mpp->prflag = PR_UNSET;
+ 		condlog(2, "%s: prflag unset", param);
+ 	}
++	if (mpp->prhold != PR_UNSET) {
++		mpp->prhold = PR_UNSET;
++		condlog(2, "%s: prhold unset (by clearing prflag)", param);
++	}
+ 
+ 	return 0;
+ }
+@@ -1391,6 +1395,48 @@ cli_setprkey(void * v, struct strbuf *reply, void * data)
+ 	return ret;
+ }
+ 
++static int do_prhold(struct vectors *vecs, char *param, int prhold)
++{
++	struct multipath *mpp = find_mp_by_str(vecs->mpvec, param);
++
++	if (!mpp)
++		return -ENODEV;
++
++	if (mpp->prhold != prhold) {
++		mpp->prhold = prhold;
++		condlog(2, "%s: prhold %s", param, pr_str[prhold]);
++	}
++
++	return 0;
++}
++
++static int cli_setprhold(void *v, struct strbuf *reply, void *data)
++{
++	return do_prhold((struct vectors *)data, get_keyparam(v, KEY_MAP), PR_SET);
++}
++
++static int cli_unsetprhold(void *v, struct strbuf *reply, void *data)
++{
++	return do_prhold((struct vectors *)data, get_keyparam(v, KEY_MAP), PR_UNSET);
++}
++
++static int cli_getprhold(void *v, struct strbuf *reply, void *data)
++{
++	struct multipath *mpp;
++	struct vectors *vecs = (struct vectors *)data;
++	char *param = get_keyparam(v, KEY_MAP);
++
++	param = convert_dev(param, 0);
++
++	mpp = find_mp_by_str(vecs->mpvec, param);
++	if (!mpp)
++		return -ENODEV;
++
++	append_strbuf_str(reply, pr_str[mpp->prhold]);
++	condlog(3, "%s: reply = %s", param, get_strbuf_str(reply));
++	return 0;
++}
++
+ static int cli_set_marginal(void * v, struct strbuf *reply, void * data)
+ {
+ 	struct vectors * vecs = (struct vectors *)data;
+diff --git a/multipathd/main.c b/multipathd/main.c
+index bd4342a3..d1d209d3 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -3939,6 +3939,33 @@ main (int argc, char *argv[])
+ 		return (child(NULL));
+ }
+ 
++static void check_prhold(struct multipath *mpp, struct path *pp)
++{
++	struct prin_resp resp = {{{.prgeneration = 0}}};
++	int status;
++
++	if (mpp->prflag == PR_UNSET) {
++		mpp->prhold = PR_UNSET;
++		return;
++	}
++	if (mpp->prflag != PR_SET || mpp->prhold != PR_UNKNOWN)
++		return;
++
++	status = prin_do_scsi_ioctl(pp->dev, MPATH_PRIN_RRES_SA, &resp, 0);
++	if (status != MPATH_PR_SUCCESS) {
++		condlog(0, "%s: pr in read reservation command failed: %d",
++			mpp->wwid, status);
++		return;
++	}
++	mpp->prhold = PR_UNSET;
++	if (!resp.prin_descriptor.prin_readresv.additional_length)
++		return;
++
++	if (memcmp(&mpp->reservation_key,
++		   resp.prin_descriptor.prin_readresv.key, 8) == 0)
++		mpp->prhold = PR_SET;
++}
++
+ static void mpath_pr_event_handle(struct path *pp)
+ {
+ 	struct multipath *mpp = pp->mpp;
+@@ -3950,8 +3977,13 @@ static void mpath_pr_event_handle(struct path *pp)
+ 		return;
+ 	}
+ 
+-	if (update_map_pr(mpp, pp) != MPATH_PR_SUCCESS)
++	if (update_map_pr(mpp, pp) != MPATH_PR_SUCCESS) {
++		if (mpp->prflag == PR_UNSET)
++			mpp->prhold = PR_UNSET;
+ 		return;
++	}
++
++	check_prhold(mpp, pp);
+ 
+ 	if (mpp->prflag != PR_SET)
+ 		return;

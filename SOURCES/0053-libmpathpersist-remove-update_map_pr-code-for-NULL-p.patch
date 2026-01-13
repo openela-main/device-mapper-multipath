@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Fri, 25 Jul 2025 23:58:42 -0400
+Subject: [PATCH] libmpathpersist: remove update_map_pr code for NULL pp
+
+Since update_map_pr is always called with pp set now, remove the code
+to handle being called with NULL pp.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmpathpersist/mpath_persist_int.c | 9 +--------
+ 1 file changed, 1 insertion(+), 8 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index 1948de8d..04bbc455 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -850,15 +850,8 @@ int update_map_pr(struct multipath *mpp, struct path *pp)
+ 		condlog(0,"%s : failed to alloc resp in update_map_pr", mpp->alias);
+ 		return MPATH_PR_OTHER;
+ 	}
+-	if (!pp && count_active_paths(mpp) == 0) {
+-		condlog(2, "%s: No available paths to check pr status", mpp->alias);
+-		goto out;
+-	}
+-	if (pp)
+-		ret = prin_do_scsi_ioctl(pp->dev, MPATH_PRIN_RKEY_SA, resp, noisy);
+-	else
+-		ret = mpath_prin_activepath(mpp, MPATH_PRIN_RKEY_SA, resp, noisy);
+ 
++	ret = prin_do_scsi_ioctl(pp->dev, MPATH_PRIN_RKEY_SA, resp, noisy);
+ 	if (ret != MPATH_PR_SUCCESS )
+ 	{
+ 		if (ret == MPATH_PR_ILLEGAL_REQ)

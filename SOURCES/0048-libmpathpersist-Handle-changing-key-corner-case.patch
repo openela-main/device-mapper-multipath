@@ -1,0 +1,191 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 10 Jul 2025 14:10:56 -0400
+Subject: [PATCH] libmpathpersist: Handle changing key corner case
+
+When you change the reservation key of a registered multipath device,
+some of paths might be down or even deleted since you originally
+registered the key. libmpathpersist won't be able to change these
+registrations. This can be a problem if the path that is down is holding
+the reservation. Other nodes will assume that the reservation is now
+under your new key, when it is still under the old one. If they try to
+preempt the reservation, they will succeed. But they will just
+unregister all the paths with the new key. They won't take over the
+reservation, and if the path holding it comes back up, it will still be
+able to write to the device.
+
+To avoid this, after libmpathpersist changes the key of a registered
+device, it now checks to see if its old key is still holding the
+reservation. If it is, limpathpersist preempts the reservation.
+Currently this only works on REGISTER commands, not REGISTER AND IGNORE
+ones. A future patch will add that capability. This patch also moves
+mpath_prout_common() up, without changing it at all.
+
+I should note that this relies on the fact that libmpathpersist has
+never worked correctly if two nodes use the same reservation key for the
+same device. If another node used the same key, it could be the one
+holding the reservation, and preempting the reservation would deregister
+it. However, multipathd has always relied on the fact that two nodes
+will not use the same registration key to know if it is safe to register
+a key on a path that was just added or just came back up. If there is
+already a registered key matching the configured key, multipathd assumes
+that the device has not been preempted, and registers the key on the
+path. If there are no keys matching the configured key, multipathd
+assumes that the device has been preempted, and won't register a key.
+Again, if another node shared the same key, multipathd could registered
+paths on a node that had been preempted.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmpathpersist/mpath_persist_int.c | 127 ++++++++++++++++++++--------
+ 1 file changed, 93 insertions(+), 34 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index 553fa509..02b3e59a 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -230,6 +230,97 @@ static void *mpath_prout_pthread_fn(void *p)
+ 	pthread_exit(NULL);
+ }
+ 
++static int
++mpath_prout_common(struct multipath *mpp, int rq_servact, int rq_scope,
++		   unsigned int rq_type, struct prout_param_descriptor *paramp,
++		   int noisy, struct path **pptr)
++{
++	int i, j, ret;
++	struct pathgroup *pgp = NULL;
++	struct path *pp = NULL;
++	bool found = false;
++
++	vector_foreach_slot (mpp->pg, pgp, j) {
++		vector_foreach_slot (pgp->paths, pp, i) {
++			if (!((pp->state == PATH_UP) || (pp->state == PATH_GHOST))) {
++				condlog(1, "%s: %s path not up. Skip",
++					mpp->wwid, pp->dev);
++				continue;
++			}
++
++			condlog(3, "%s: sending pr out command to %s",
++				mpp->wwid, pp->dev);
++			found = true;
++			ret = prout_do_scsi_ioctl(pp->dev, rq_servact, rq_scope,
++						  rq_type, paramp, noisy);
++			if (ret == MPATH_PR_SUCCESS && pptr)
++				*pptr = pp;
++			if (ret != MPATH_PR_RETRYABLE_ERROR)
++				return ret;
++		}
++	}
++	if (found)
++		return MPATH_PR_OTHER;
++	condlog(0, "%s: no path available", mpp->wwid);
++	return MPATH_PR_DMMP_ERROR;
++}
++
++/*
++ * If you are changing the key registered to a device, and that device is
++ * holding the reservation on a path that couldn't get its key updated,
++ * either because it is down or no longer part of the multipath device,
++ * you need to preempt the reservation to a usable path with the new key
++ */
++void preempt_missing_path(struct multipath *mpp, uint8_t *key, uint8_t *sa_key,
++			  int noisy)
++{
++	uint8_t zero[8] = {0};
++	struct prin_resp resp = {{{.prgeneration = 0}}};
++	int rq_scope;
++	unsigned int rq_type;
++	struct prout_param_descriptor paramp = {.sa_flags = 0};
++	int status;
++
++	/*
++	 * If you previously didn't have a key registered or you didn't
++	 * switch to a different key, there's no need to preempt. Also, you
++	 * can't preempt if you no longer have a registered key
++	 */
++	if (memcmp(key, zero, 8) == 0 || memcmp(sa_key, zero, 8) == 0 ||
++	    memcmp(key, sa_key, 8) == 0)
++		return;
++
++	status = mpath_prin_activepath(mpp, MPATH_PRIN_RRES_SA, &resp, noisy);
++	if (status != MPATH_PR_SUCCESS) {
++		condlog(0, "%s: register: pr in read reservation command failed.",
++			mpp->wwid);
++		return;
++	}
++	/* If there is no reservation, there's nothing to preempt */
++	if (!resp.prin_descriptor.prin_readresv.additional_length)
++		return;
++	/*
++	 * If there reservation is not held by the old key, you don't
++	 * want to preempt it
++	 */
++	if (memcmp(key, resp.prin_descriptor.prin_readresv.key, 8) != 0)
++		return;
++	/* Assume this key is being held by an inaccessable path on this
++	 * node. libmpathpersist has never worked if multiple nodes share
++	 * the same reservation key for a device
++	 */
++	rq_type = resp.prin_descriptor.prin_readresv.scope_type & MPATH_PR_TYPE_MASK;
++	rq_scope = (resp.prin_descriptor.prin_readresv.scope_type &
++		    MPATH_PR_SCOPE_MASK) >>
++		   4;
++	memcpy(paramp.key, sa_key, 8);
++	memcpy(paramp.sa_key, key, 8);
++	status = mpath_prout_common(mpp, MPATH_PROUT_PREE_SA, rq_scope,
++				    rq_type, &paramp, noisy, NULL);
++	if (status != MPATH_PR_SUCCESS)
++		condlog(0, "%s: register: pr preempt command failed.", mpp->wwid);
++}
++
+ static int mpath_prout_reg(struct multipath *mpp,int rq_servact, int rq_scope,
+ 			   unsigned int rq_type,
+ 			   struct prout_param_descriptor * paramp, int noisy)
+@@ -370,43 +461,11 @@ static int mpath_prout_reg(struct multipath *mpp,int rq_servact, int rq_scope,
+ 	}
+ 
+ 	pthread_attr_destroy(&attr);
++	if (status == MPATH_PR_SUCCESS)
++		preempt_missing_path(mpp, paramp->key, paramp->sa_key, noisy);
+ 	return (status == MPATH_PR_RETRYABLE_ERROR) ? MPATH_PR_OTHER : status;
+ }
+ 
+-static int
+-mpath_prout_common(struct multipath *mpp, int rq_servact, int rq_scope,
+-		   unsigned int rq_type, struct prout_param_descriptor *paramp,
+-		   int noisy, struct path **pptr)
+-{
+-	int i,j, ret;
+-	struct pathgroup *pgp = NULL;
+-	struct path *pp = NULL;
+-	bool found = false;
+-
+-	vector_foreach_slot (mpp->pg, pgp, j){
+-		vector_foreach_slot (pgp->paths, pp, i){
+-			if (!((pp->state == PATH_UP) || (pp->state == PATH_GHOST))){
+-				condlog (1, "%s: %s path not up. Skip",
+-					 mpp->wwid, pp->dev);
+-				continue;
+-			}
+-
+-			condlog (3, "%s: sending pr out command to %s", mpp->wwid, pp->dev);
+-			found = true;
+-			ret = prout_do_scsi_ioctl(pp->dev, rq_servact, rq_scope,
+-						  rq_type, paramp, noisy);
+-			if (ret == MPATH_PR_SUCCESS && pptr)
+-				*pptr = pp;
+-			if (ret != MPATH_PR_RETRYABLE_ERROR)
+-				return ret;
+-		}
+-	}
+-	if (found)
+-		return MPATH_PR_OTHER;
+-	condlog (0, "%s: no path available", mpp->wwid);
+-	return MPATH_PR_DMMP_ERROR;
+-}
+-
+ static int mpath_prout_rel(struct multipath *mpp,int rq_servact, int rq_scope,
+ 			   unsigned int rq_type,
+ 			   struct prout_param_descriptor * paramp, int noisy)

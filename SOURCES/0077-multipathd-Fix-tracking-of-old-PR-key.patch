@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 30 Sep 2025 23:32:11 -0400
+Subject: [PATCH] multipathd: Fix tracking of old PR key
+
+When libmpathpersist is in the process of changing a registered key,
+multipathd needs to remember both the old and new values of the key to
+deal with a race between limpathpersist updating the key and multipathd
+restoring a failed path. It was supposed to stop remembering the old
+value when libmpathpersist was done changing the key and issued a
+"setprstatus" command. However, clearing the old key was done in
+set_pr(), which only gets called by cli_setprstatus() when registering a
+new device, not when changing the key on a registered device. Also,
+set_pr() is called by update_map_pr().  This means that multipathd was
+forgetting the key when it shouldn't and not when it should. Fix this
+to only forget the key when cli_setprstatus() is called, and always
+then.
+
+Fixes: 1aeffa9e ("libmpathpersist: handle updating key race condition")
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipathd/cli_handlers.c | 1 +
+ multipathd/main.c         | 1 -
+ 2 files changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/multipathd/cli_handlers.c b/multipathd/cli_handlers.c
+index ee2764b9..1696dbd4 100644
+--- a/multipathd/cli_handlers.c
++++ b/multipathd/cli_handlers.c
+@@ -1283,6 +1283,7 @@ cli_setprstatus(void * v, struct strbuf *reply, void * data)
+ 		set_pr(mpp);
+ 		condlog(2, "%s: prflag set", param);
+ 	}
++	memset(&mpp->old_pr_key, 0, 8);
+ 
+ 	return 0;
+ }
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 06ff6858..e17a3355 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -3968,7 +3968,6 @@ void set_pr(struct multipath *mpp)
+ {
+ 	mpp->ever_registered_pr = true;
+ 	mpp->prflag = PR_SET;
+-	memset(&mpp->old_pr_key, 0, 8);
+ }
+ 
+ void unset_pr(struct multipath *mpp)

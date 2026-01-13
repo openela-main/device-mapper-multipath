@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Fri, 25 Jul 2025 23:58:51 -0400
+Subject: [PATCH] libmpathpersist: only clear the key if we are using the
+ prkeys file
+
+Otherwise this request will create a useless prkeys file.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmpathpersist/mpath_persist_int.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index dd056135..a6940d12 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -855,7 +855,8 @@ int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+ 		break;
+ 	case MPATH_PROUT_CLEAR_SA:
+ 		update_prflag(alias, 0);
+-		update_prkey(alias, 0);
++		if (mpp->prkey_source == PRKEY_SOURCE_FILE)
++			update_prkey(alias, 0);
+ 		break;
+ 	case MPATH_PROUT_RES_SA:
+ 	case MPATH_PROUT_REL_SA:

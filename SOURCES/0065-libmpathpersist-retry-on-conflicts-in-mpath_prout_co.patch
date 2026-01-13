@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Fri, 25 Jul 2025 23:58:54 -0400
+Subject: [PATCH] libmpathpersist: retry on conflicts in mpath_prout_common
+
+mpath_prout_common() just needs to execute a prout command down one
+path. If it uses a path that was down when the key was changed and has
+since been restored, but multipathd hasn't noticed yet, that path will
+still be using the old key. This was causing mpath_prout_common() to
+fail with MPATH_PR_RESERV_CONFLICT, even if there were other paths that
+would work.
+
+Now, if prout command fails with MPATH_PR_RESERV_CONFLICT,
+mpath_prout_common() checks if pp->dmstate is PSTATE_FAILED. If it is,
+mpath_prout_common() assumes that multipathd has not yet noticed that
+the path is back online and it might still have and old key, so it
+doesn't immediately return. If it can't successfully send the command
+down another path, it will still return MPATH_PR_RESERV_CONFLICT.
+
+Also, make sure prout_do_scsi_ioctl() always returns a MPATH_PR_*
+type error.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmpathpersist/mpath_persist_int.c | 14 +++++++++++++-
+ libmpathpersist/mpath_pr_ioctl.c    |  2 +-
+ 2 files changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index d498e69e..762958e8 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -216,6 +216,7 @@ mpath_prout_common(struct multipath *mpp, int rq_servact, int rq_scope,
+ 	struct pathgroup *pgp = NULL;
+ 	struct path *pp = NULL;
+ 	bool found = false;
++	bool conflict = false;
+ 
+ 	vector_foreach_slot (mpp->pg, pgp, j) {
+ 		vector_foreach_slot (pgp->paths, pp, i) {
+@@ -232,12 +233,23 @@ mpath_prout_common(struct multipath *mpp, int rq_servact, int rq_scope,
+ 						  rq_type, paramp, noisy);
+ 			if (ret == MPATH_PR_SUCCESS && pptr)
+ 				*pptr = pp;
++			/*
++			 * If this path is considered down by the kernel,
++			 * it may have just come back up, and multipathd
++			 * may not have had time to update the key. Allow
++			 * reservation conflicts.
++			 */
++			if (ret == MPATH_PR_RESERV_CONFLICT &&
++			    pp->dmstate == PSTATE_FAILED) {
++				conflict = true;
++				continue;
++			}
+ 			if (ret != MPATH_PR_RETRYABLE_ERROR)
+ 				return ret;
+ 		}
+ 	}
+ 	if (found)
+-		return MPATH_PR_OTHER;
++		return conflict ? MPATH_PR_RESERV_CONFLICT : MPATH_PR_OTHER;
+ 	condlog(0, "%s: no path available", mpp->wwid);
+ 	return MPATH_PR_DMMP_ERROR;
+ }
+diff --git a/libmpathpersist/mpath_pr_ioctl.c b/libmpathpersist/mpath_pr_ioctl.c
+index dfdbbb65..6eaec7cd 100644
+--- a/libmpathpersist/mpath_pr_ioctl.c
++++ b/libmpathpersist/mpath_pr_ioctl.c
+@@ -103,7 +103,7 @@ retry :
+ 	{
+ 		condlog(0, "%s: ioctl failed %d", dev, ret);
+ 		close(fd);
+-		return ret;
++		return MPATH_PR_OTHER;
+ 	}
+ 
+ 	condlog(4, "%s: Duration=%u (ms)", dev, io_hdr.duration);

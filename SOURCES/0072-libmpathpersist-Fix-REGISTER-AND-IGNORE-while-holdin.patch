@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 18 Sep 2025 18:12:07 -0400
+Subject: [PATCH] libmpathpersist: Fix REGISTER AND IGNORE while holding a
+ reservation
+
+If a device that is holding a reservation changes its registered key,
+but the path holding the reservation is unavailable, libmpathpersist
+must preempt the old key to update the reservation. If the key is
+changed using REGISTER AND IGNORE, set_ignored_key() determines the old
+key to preempt. Unfortunately, commit 165427dda broke it, by comparing
+the wrong key against the actual reservation key. Then commit cf0eea85
+broke it more, by using mpp->reservation_key after it had been updated,
+so it was no longer the old key. Fix this by correctly comparing the old
+key against the actual reservation key.
+
+Fixes: 165427dda ("libmpathpersist: Add safety check for preempting on key change")
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmpathpersist/mpath_persist_int.c | 13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index 87d7cb6b..e3514137 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -801,16 +801,17 @@ static int reservation_key_matches(struct multipath *mpp, uint8_t *key, int nois
+  * currently registered key for use in preempt_missing_path(), but only if
+  * the key is holding the reservation.
+  */
+-static void set_ignored_key(struct multipath *mpp, uint8_t *key)
++static void set_ignored_key(struct multipath *mpp, uint8_t *curr_key,
++			    uint8_t *key)
+ {
+ 	memset(key, 0, 8);
+-	if (!get_be64(mpp->reservation_key))
++	if (memcmp(curr_key, key, 8) == 0)
+ 		return;
+ 	if (get_prhold(mpp->alias) == PR_UNSET)
+ 		return;
+-	if (reservation_key_matches(mpp, key, 0) == YNU_NO)
++	if (reservation_key_matches(mpp, curr_key, 0) == YNU_NO)
+ 		return;
+-	memcpy(key, &mpp->reservation_key, 8);
++	memcpy(key, curr_key, 8);
+ }
+ 
+ int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+@@ -834,6 +835,7 @@ int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+ 	select_reservation_key(conf, mpp);
+ 	put_multipath_config(conf);
+ 
++	memcpy(&oldkey, &mpp->reservation_key, 8);
+ 	unregistering = (memcmp(&zerokey, paramp->sa_key, 8) == 0);
+ 	if (mpp->prkey_source == PRKEY_SOURCE_FILE &&
+ 	    (rq_servact == MPATH_PROUT_REG_IGN_SA ||
+@@ -842,7 +844,6 @@ int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+ 	       memcmp(paramp->key, &zerokey, 8) == 0 ||
+ 	       memcmp(paramp->key, &mpp->reservation_key, 8) == 0)))) {
+ 		updated_prkey = true;
+-		memcpy(&oldkey, &mpp->reservation_key, 8);
+ 		memcpy(&mpp->reservation_key, paramp->sa_key, 8);
+ 		if (update_prkey_flags(alias, get_be64(mpp->reservation_key),
+ 				       paramp->sa_flags)) {
+@@ -910,7 +911,7 @@ int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+ 	put_multipath_config(conf);
+ 
+ 	if (rq_servact == MPATH_PROUT_REG_IGN_SA)
+-		set_ignored_key(mpp, paramp->key);
++		set_ignored_key(mpp, (uint8_t *)&oldkey, paramp->key);
+ 
+ 	switch(rq_servact)
+ 	{

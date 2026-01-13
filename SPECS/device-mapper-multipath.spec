@@ -1,6 +1,6 @@
 Name:    device-mapper-multipath
 Version: 0.9.9
-Release: 12%{?dist}
+Release: 12%{?dist}.1
 Summary: Tools to manage multipath devices using device-mapper
 License: GPLv2
 URL:     http://christophe.varoqui.free.fr/
@@ -44,6 +44,51 @@ Patch0031: 0031-libmultipath-add-helper-function-check_path_wwid_cha.patch
 Patch0032: 0032-multipathd-re-add-paths-skipped-because-they-were-of.patch
 Patch0033: 0033-multipath-tools-add-HPE-MSA-Gen7-2070-2072-to-hwtabl.patch
 Patch0034: 0034-libmultipath-fix-crash-in-print_foreign_topology.patch
+Patch0035: 0035-libmpathpersist-fix-memory-leak-in-mpath_prout_rel.patch
+Patch0036: 0036-libmpathpersist-retry-commands-on-other-paths-in-mpa.patch
+Patch0037: 0037-libmpathpersist-check-released-key-against-the-reser.patch
+Patch0038: 0038-multipathd-remove-thread-from-mpath_pr_event_handle.patch
+Patch0039: 0039-libmpathpersist-remove-uneeded-wrapper-function.patch
+Patch0040: 0040-libmpathpersist-reduce-log-level-for-persistent-rese.patch
+Patch0041: 0041-libmpathpersist-remove-pointless-update_map_pr-ret-v.patch
+Patch0042: 0042-multipathd-use-update_map_pr-in-mpath_pr_event_handl.patch
+Patch0043: 0043-libmpathpersist-limit-changing-prflag-in-update_map_.patch
+Patch0044: 0044-multipathd-Don-t-call-update_map_pr-unnecessarily.patch
+Patch0045: 0045-libmpathpersist-remove-useless-function-send_prout_a.patch
+Patch0046: 0046-libmpathpersist-redesign-failed-release-workaround.patch
+Patch0047: 0047-libmpathpersist-fail-the-release-if-all-threads-fail.patch
+Patch0048: 0048-libmpathpersist-Handle-changing-key-corner-case.patch
+Patch0049: 0049-libmpathpersist-Handle-REGISTER-AND-IGNORE-changing-.patch
+Patch0050: 0050-libmultipath-rename-prflag_value-enums.patch
+Patch0051: 0051-libmpathpersist-use-a-switch-statement-for-prout-com.patch
+Patch0052: 0052-libmpathpersist-Add-safety-check-for-preempting-on-k.patch
+Patch0053: 0053-libmpathpersist-remove-update_map_pr-code-for-NULL-p.patch
+Patch0054: 0054-libmpathpersist-move-update_map_pr-to-multipathd.patch
+Patch0055: 0055-multipathd-clean-up-update_map_pr-and-mpath_pr_event.patch
+Patch0056: 0056-libmpathpersist-clean-up-duplicate-function-declarat.patch
+Patch0057: 0057-multipathd-wrap-setting-and-unsetting-prflag.patch
+Patch0058: 0058-multipathd-unregister-PR-key-when-path-is-restored-i.patch
+Patch0059: 0059-libmpathpersist-Fix-up-reservation_key-checking.patch
+Patch0060: 0060-libmpathpersist-change-how-reservation-conflicts-are.patch
+Patch0061: 0061-libmpathpersist-Clear-prkey-in-multipathd-before-unr.patch
+Patch0062: 0062-libmpathpersist-only-clear-the-key-if-we-are-using-t.patch
+Patch0063: 0063-libmpathpersist-Restore-old-reservation-key-on-failu.patch
+Patch0064: 0064-libmpathpersist-update-reservation-key-before-checki.patch
+Patch0065: 0065-libmpathpersist-retry-on-conflicts-in-mpath_prout_co.patch
+Patch0066: 0066-libmpathpersist-Don-t-always-fail-registrations-for-.patch
+Patch0067: 0067-libmpathpersist-Don-t-try-release-workaround-for-inv.patch
+Patch0068: 0068-libmpathpersist-Don-t-fail-RESERVE-commands-unnecess.patch
+Patch0069: 0069-libmpathpersist-reregister-keys-when-self-preempting.patch
+Patch0070: 0070-libmpathpersist-handle-updating-key-race-condition.patch
+Patch0071: 0071-libmpathpersist-handle-preempting-all-registrants-re.patch
+Patch0072: 0072-libmpathpersist-Fix-REGISTER-AND-IGNORE-while-holdin.patch
+Patch0073: 0073-libmpathpersist-Handle-RESERVE-with-reservation-held.patch
+Patch0074: 0074-libmpathpersist-use-check_holding_reservation-in-mpa.patch
+Patch0075: 0075-libmpathpersist-Fix-unregistering-while-holding-the-.patch
+Patch0076: 0076-libmpathpersist-Fix-race-between-restoring-a-path-an.patch
+Patch0077: 0077-multipathd-Fix-tracking-of-old-PR-key.patch
+Patch0078: 0078-multipathd-Fix-race-while-registering-PR-key.patch
+Patch0079: 0079-mpathpersist-Fix-REPORT-CAPABILITIES-output.patch
 
 # runtime
 Requires: %{name}-libs = %{version}-%{release}
@@ -253,6 +298,56 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
+* Tue Nov 11 2025 Lin Li <lilin@redhat.com> - 0.9.9-12.1
+- Add 0035-libmpathpersist-fix-memory-leak-in-mpath_prout_rel.patch
+- Add 0036-libmpathpersist-retry-commands-on-other-paths-in-mpa.patch
+- Add 0037-libmpathpersist-check-released-key-against-the-reser.patch
+- Add 0038-multipathd-remove-thread-from-mpath_pr_event_handle.patch
+- Add 0039-libmpathpersist-remove-uneeded-wrapper-function.patch
+- Add 0040-libmpathpersist-reduce-log-level-for-persistent-rese.patch
+- Add 0041-libmpathpersist-remove-pointless-update_map_pr-ret-v.patch
+- Add 0042-multipathd-use-update_map_pr-in-mpath_pr_event_handl.patch
+- Add 0043-libmpathpersist-limit-changing-prflag-in-update_map_.patch
+- Add 0044-multipathd-Don-t-call-update_map_pr-unnecessarily.patch
+- Add 0045-libmpathpersist-remove-useless-function-send_prout_a.patch
+- Add 0046-libmpathpersist-redesign-failed-release-workaround.patch
+- Add 0047-libmpathpersist-fail-the-release-if-all-threads-fail.patch
+- Add 0048-libmpathpersist-Handle-changing-key-corner-case.patch
+- Add 0049-libmpathpersist-Handle-REGISTER-AND-IGNORE-changing-.patch
+- Add 0050-libmultipath-rename-prflag_value-enums.patch
+- Add 0051-libmpathpersist-use-a-switch-statement-for-prout-com.patch
+- Add 0052-libmpathpersist-Add-safety-check-for-preempting-on-k.patch
+- Add 0053-libmpathpersist-remove-update_map_pr-code-for-NULL-p.patch
+- Add 0054-libmpathpersist-move-update_map_pr-to-multipathd.patch
+- Add 0055-multipathd-clean-up-update_map_pr-and-mpath_pr_event.patch
+- Add 0056-libmpathpersist-clean-up-duplicate-function-declarat.patch
+- Add 0057-multipathd-wrap-setting-and-unsetting-prflag.patch
+- Add 0058-multipathd-unregister-PR-key-when-path-is-restored-i.patch
+- Add 0059-libmpathpersist-Fix-up-reservation_key-checking.patch
+- Add 0060-libmpathpersist-change-how-reservation-conflicts-are.patch
+- Add 0061-libmpathpersist-Clear-prkey-in-multipathd-before-unr.patch
+- Add 0062-libmpathpersist-only-clear-the-key-if-we-are-using-t.patch
+- Add 0063-libmpathpersist-Restore-old-reservation-key-on-failu.patch
+- Add 0064-libmpathpersist-update-reservation-key-before-checki.patch
+- Add 0065-libmpathpersist-retry-on-conflicts-in-mpath_prout_co.patch
+- Add 0066-libmpathpersist-Don-t-always-fail-registrations-for-.patch
+- Add 0067-libmpathpersist-Don-t-try-release-workaround-for-inv.patch
+- Add 0068-libmpathpersist-Don-t-fail-RESERVE-commands-unnecess.patch
+- Add 0069-libmpathpersist-reregister-keys-when-self-preempting.patch
+- Add 0070-libmpathpersist-handle-updating-key-race-condition.patch
+- Add 0071-libmpathpersist-handle-preempting-all-registrants-re.patch
+- Add 0072-libmpathpersist-Fix-REGISTER-AND-IGNORE-while-holdin.patch
+- Add 0073-libmpathpersist-Handle-RESERVE-with-reservation-held.patch
+- Add 0074-libmpathpersist-use-check_holding_reservation-in-mpa.patch
+- Add 0075-libmpathpersist-Fix-unregistering-while-holding-the-.patch
+- Add 0076-libmpathpersist-Fix-race-between-restoring-a-path-an.patch
+- Add 0077-multipathd-Fix-tracking-of-old-PR-key.patch
+- Add 0078-multipathd-Fix-race-while-registering-PR-key.patch
+- Add 0079-mpathpersist-Fix-REPORT-CAPABILITIES-output.patch
+  * Fixes RHEL-125288 ("There are many bugs in multipath's persistent
+    reservation handling [rhel-10.1.z]")
+- Resolves: RHEL-125288
+
 * Sat Sep 13 2025 Lin Li <lilin@redhat.com> - 0.9.9-12
 Add 0034-libmultipath-fix-crash-in-print_foreign_topology.patch
   * Fixes RHEL-107436 ("Running multipath -ll on system with "enable_foreign

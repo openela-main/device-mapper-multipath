@@ -1,0 +1,249 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 10 Jul 2025 14:10:58 -0400
+Subject: [PATCH] libmultipath: rename prflag_value enums
+
+These will also be used by another variable, so make their name more
+generic.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmpathpersist/mpath_persist_int.c | 16 ++++++++--------
+ libmpathpersist/mpath_updatepr.c    |  8 ++++----
+ libmultipath/structs.h              |  9 ++++-----
+ multipathd/cli_handlers.c           | 22 +++++++++++-----------
+ multipathd/main.c                   | 17 ++++++++---------
+ 5 files changed, 35 insertions(+), 37 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index 19220d7a..d596b5bd 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -663,10 +663,10 @@ static void set_ignored_key(struct multipath *mpp, uint8_t *key)
+ 	memset(key, 0, 8);
+ 	if (!get_be64(mpp->reservation_key))
+ 		return;
+-	if (get_prflag(mpp->alias) == PRFLAG_UNSET)
++	if (get_prflag(mpp->alias) == PR_UNSET)
+ 		return;
+ 	update_map_pr(mpp, NULL);
+-	if (mpp->prflag != PRFLAG_SET)
++	if (mpp->prflag != PR_SET)
+ 		return;
+ 	memcpy(key, &mpp->reservation_key, 8);
+ }
+@@ -767,16 +767,16 @@ int update_map_pr(struct multipath *mpp, struct path *pp)
+ 	struct prin_resp *resp;
+ 	unsigned int i;
+ 	int ret = MPATH_PR_OTHER, isFound;
+-	bool was_set = (mpp->prflag == PRFLAG_SET);
++	bool was_set = (mpp->prflag == PR_SET);
+ 
+ 	/* If pr is explicitly unset, it must be manually set */
+-	if (mpp->prflag == PRFLAG_UNSET)
++	if (mpp->prflag == PR_UNSET)
+ 		return MPATH_PR_SKIP;
+ 
+ 	if (!get_be64(mpp->reservation_key))
+ 	{
+ 		/* Nothing to do. Assuming pr mgmt feature is disabled*/
+-		mpp->prflag = PRFLAG_UNSET;
++		mpp->prflag = PR_UNSET;
+ 		condlog(was_set ? 2 : 4,
+ 			"%s: reservation_key not set in multipath.conf",
+ 			mpp->alias);
+@@ -801,11 +801,11 @@ int update_map_pr(struct multipath *mpp, struct path *pp)
+ 	if (ret != MPATH_PR_SUCCESS )
+ 	{
+ 		if (ret == MPATH_PR_ILLEGAL_REQ)
+-			mpp->prflag = PRFLAG_UNSET;
++			mpp->prflag = PR_UNSET;
+ 		condlog(0,"%s : pr in read keys service action failed Error=%d", mpp->alias, ret);
+ 		goto out;
+ 	}
+-	mpp->prflag = PRFLAG_UNSET;
++	mpp->prflag = PR_UNSET;
+ 
+ 	if (resp->prin_descriptor.prin_readkeys.additional_length == 0 )
+ 	{
+@@ -840,7 +840,7 @@ int update_map_pr(struct multipath *mpp, struct path *pp)
+ 
+ 	if (isFound)
+ 	{
+-		mpp->prflag = PRFLAG_SET;
++		mpp->prflag = PR_SET;
+ 		condlog(was_set ? 3 : 2, "%s: key found. prflag set.", mpp->alias);
+ 	} else
+ 		condlog(was_set ? 1 : 3, "%s: key not found. prflag unset.",
+diff --git a/libmpathpersist/mpath_updatepr.c b/libmpathpersist/mpath_updatepr.c
+index 7cf82f50..c8fbe4a2 100644
+--- a/libmpathpersist/mpath_updatepr.c
++++ b/libmpathpersist/mpath_updatepr.c
+@@ -84,13 +84,13 @@ int get_prflag(char *mapname)
+ 	snprintf(str, sizeof(str), "getprstatus map %s", mapname);
+ 	reply = do_pr(mapname, str);
+ 	if (!reply)
+-		prflag = PRFLAG_UNKNOWN;
++		prflag = PR_UNKNOWN;
+ 	else if (strncmp(reply, "unset", 5) == 0)
+-		prflag = PRFLAG_UNSET;
++		prflag = PR_UNSET;
+ 	else if (strncmp(reply, "set", 3) == 0)
+-		prflag = PRFLAG_SET;
++		prflag = PR_SET;
+ 	else
+-		prflag = PRFLAG_UNKNOWN;
++		prflag = PR_UNKNOWN;
+ 
+ 	free(reply);
+ 	return prflag;
+diff --git a/libmultipath/structs.h b/libmultipath/structs.h
+index 5dc00fbc..24135aa6 100644
+--- a/libmultipath/structs.h
++++ b/libmultipath/structs.h
+@@ -406,11 +406,10 @@ struct path {
+ 
+ typedef int (pgpolicyfn) (struct multipath *, vector);
+ 
+-
+-enum prflag_value {
+-	PRFLAG_UNKNOWN,
+-	PRFLAG_UNSET,
+-	PRFLAG_SET,
++enum pr_value {
++	PR_UNKNOWN,
++	PR_UNSET,
++	PR_SET,
+ };
+ 
+ struct multipath {
+diff --git a/multipathd/cli_handlers.c b/multipathd/cli_handlers.c
+index 117570e1..8e2e2cea 100644
+--- a/multipathd/cli_handlers.c
++++ b/multipathd/cli_handlers.c
+@@ -1240,14 +1240,15 @@ cli_shutdown (void * v, struct strbuf *reply, void * data)
+ 	return 0;
+ }
+ 
++static const char *const pr_str[] = {
++	[PR_UNKNOWN] = "unknown\n",
++	[PR_UNSET] = "unset\n",
++	[PR_SET] = "set\n",
++};
++
+ static int
+ cli_getprstatus (void * v, struct strbuf *reply, void * data)
+ {
+-	static const char * const prflag_str[] = {
+-		[PRFLAG_UNKNOWN] = "unknown\n",
+-		[PRFLAG_UNSET] = "unset\n",
+-		[PRFLAG_SET] = "set\n",
+-	};
+ 	struct multipath * mpp;
+ 	struct vectors * vecs = (struct vectors *)data;
+ 	char * param = get_keyparam(v, KEY_MAP);
+@@ -1258,7 +1259,7 @@ cli_getprstatus (void * v, struct strbuf *reply, void * data)
+ 	if (!mpp)
+ 		return -ENODEV;
+ 
+-	append_strbuf_str(reply, prflag_str[mpp->prflag]);
++	append_strbuf_str(reply, pr_str[mpp->prflag]);
+ 
+ 	condlog(3, "%s: reply = %s", param, get_strbuf_str(reply));
+ 
+@@ -1278,12 +1279,11 @@ cli_setprstatus(void * v, struct strbuf *reply, void * data)
+ 	if (!mpp)
+ 		return -ENODEV;
+ 
+-	if (mpp->prflag != PRFLAG_SET) {
+-		mpp->prflag = PRFLAG_SET;
++	if (mpp->prflag != PR_SET) {
++		mpp->prflag = PR_SET;
+ 		condlog(2, "%s: prflag set", param);
+ 	}
+ 
+-
+ 	return 0;
+ }
+ 
+@@ -1300,8 +1300,8 @@ cli_unsetprstatus(void * v, struct strbuf *reply, void * data)
+ 	if (!mpp)
+ 		return -ENODEV;
+ 
+-	if (mpp->prflag != PRFLAG_UNSET) {
+-		mpp->prflag = PRFLAG_UNSET;
++	if (mpp->prflag != PR_UNSET) {
++		mpp->prflag = PR_UNSET;
+ 		condlog(2, "%s: prflag unset", param);
+ 	}
+ 
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 4a1b38e9..bd4342a3 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -644,7 +644,7 @@ pr_register_active_paths(struct multipath *mpp)
+ 
+ 	vector_foreach_slot (mpp->pg, pgp, i) {
+ 		vector_foreach_slot (pgp->paths, pp, j) {
+-			if (mpp->prflag == PRFLAG_UNSET)
++			if (mpp->prflag == PR_UNSET)
+ 				return;
+ 			if ((pp->state == PATH_UP) || (pp->state == PATH_GHOST))
+ 				mpath_pr_event_handle(pp);
+@@ -1253,7 +1253,7 @@ ev_add_path (struct path * pp, struct vectors * vecs, int need_do_map)
+ 	int start_waiter = 0;
+ 	int ret;
+ 	int ro;
+-	unsigned char prflag = PRFLAG_UNSET;
++	unsigned char prflag = PR_UNSET;
+ 
+ 	/*
+ 	 * need path UID to go any further
+@@ -1381,8 +1381,7 @@ rescan:
+ 	sync_map_state(mpp);
+ 
+ 	if (retries >= 0) {
+-		if ((mpp->prflag == PRFLAG_SET && prflag != PRFLAG_SET) ||
+-		    start_waiter)
++		if ((mpp->prflag == PR_SET && prflag != PR_SET) || start_waiter)
+ 			pr_register_active_paths(mpp);
+ 		condlog(2, "%s [%s]: path added to devmap %s",
+ 			pp->dev, pp->dev_t, mpp->alias);
+@@ -2645,7 +2644,7 @@ check_path (struct vectors * vecs, struct path * pp, unsigned int ticks)
+ 		}
+ 
+ 		if (newstate == PATH_UP || newstate == PATH_GHOST) {
+-			if (pp->mpp->prflag != PRFLAG_UNSET) {
++			if (pp->mpp->prflag != PR_UNSET) {
+ 				int prflag = pp->mpp->prflag;
+ 				/*
+ 				 * Check Persistent Reservation.
+@@ -2653,8 +2652,8 @@ check_path (struct vectors * vecs, struct path * pp, unsigned int ticks)
+ 				condlog(2, "%s: checking persistent "
+ 					"reservation registration", pp->dev);
+ 				mpath_pr_event_handle(pp);
+-				if (pp->mpp->prflag == PRFLAG_SET &&
+-				    prflag != PRFLAG_SET)
++				if (pp->mpp->prflag == PR_SET &&
++				    prflag != PR_SET)
+ 					pr_register_active_paths(pp->mpp);
+ 			}
+ 		}
+@@ -3947,14 +3946,14 @@ static void mpath_pr_event_handle(struct path *pp)
+ 	struct prout_param_descriptor *param;
+ 
+ 	if (pp->bus != SYSFS_BUS_SCSI) {
+-		mpp->prflag = PRFLAG_UNSET;
++		mpp->prflag = PR_UNSET;
+ 		return;
+ 	}
+ 
+ 	if (update_map_pr(mpp, pp) != MPATH_PR_SUCCESS)
+ 		return;
+ 
+-	if (mpp->prflag != PRFLAG_SET)
++	if (mpp->prflag != PR_SET)
+ 		return;
+ 
+ 	param = (struct prout_param_descriptor *)calloc(1, sizeof(struct prout_param_descriptor));

@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Thu, 4 Sep 2025 16:33:27 -0400
+Subject: [PATCH] libmpathpersist: Don't fail RESERVE commands unnecessarily
+
+If you issue a RESERVE to a regular SCSI device that already holds the
+reservation, it succeeds (and does nothing). If you issue a RESERVE to a
+multipath device that already holds the reservation, it can fail with
+a reservation conflict error if you issue the RESERVE to a path that isn't
+holding the reservation. Instead, it should try all paths and
+succeed if the reservation command succeeds on any of them.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmpathpersist/mpath_persist_int.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index e5ae0836..45ba68c0 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -238,9 +238,20 @@ mpath_prout_common(struct multipath *mpp, int rq_servact, int rq_scope,
+ 			 * it may have just come back up, and multipathd
+ 			 * may not have had time to update the key. Allow
+ 			 * reservation conflicts.
++			 *
++			 * If you issue a RESERVE to a regular scsi device
++			 * that already holds the reservation, it succeeds
++			 * (and does nothing). A multipath device that
++			 * holds the reservation should not return a
++			 * reservation conflict on a RESERVE command, just
++			 * because it issued the RESERVE to a path that
++			 * isn't holding the reservation. It should instead
++			 * keep trying to see if it succeeds on another
++			 * path.
+ 			 */
+ 			if (ret == MPATH_PR_RESERV_CONFLICT &&
+-			    pp->dmstate == PSTATE_FAILED) {
++			    (pp->dmstate == PSTATE_FAILED ||
++			     rq_servact == MPATH_PROUT_RES_SA)) {
+ 				conflict = true;
+ 				continue;
+ 			}

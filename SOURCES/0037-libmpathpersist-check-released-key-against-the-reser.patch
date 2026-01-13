@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 3 Jun 2025 23:35:04 -0400
+Subject: [PATCH] libmpathpersist: check released key against the reservation
+ key
+
+According to the SCSI Spec, if a persistent reservation RELEASE is
+issued using the correct key for the I_T_L Nexus that it is issued on
+but the reservation is held by a different key, the command should
+return Success and do nothing. When libmpathpersist tried to release a
+reservation that was held by a different key, it ended up using the
+failback code designed to release a reservation held by a failed path to
+release it anyways. This means that any node could release a scsi
+persistent reservation held by another node. Fix this to follow the SCSI
+Spec.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmpathpersist/mpath_persist_int.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index db105c6b..128671e5 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -551,6 +551,12 @@ static int mpath_prout_rel(struct multipath *mpp,int rq_servact, int rq_scope,
+ 		condlog (2, "%s: Path holding reservation is released.", mpp->wwid);
+ 		return MPATH_PR_SUCCESS;
+ 	}
++	if (!get_be64(mpp->reservation_key) ||
++	    memcmp(&mpp->reservation_key, resp.prin_descriptor.prin_readresv.key, 8)) {
++		condlog(2, "%s: Releasing key not holding reservation.", mpp->wwid);
++		return MPATH_PR_SUCCESS;
++	}
++
+ 	condlog (2, "%s: Path holding reservation is not available.", mpp->wwid);
+ 
+ 	pr_buff =  mpath_alloc_prin_response(MPATH_PRIN_RFSTAT_SA);

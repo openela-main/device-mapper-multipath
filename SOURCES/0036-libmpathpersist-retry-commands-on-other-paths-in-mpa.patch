@@ -1,0 +1,164 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 3 Jun 2025 23:35:03 -0400
+Subject: [PATCH] libmpathpersist: retry commands on other paths in
+ mpath_prout_common
+
+mpath_prout_common() will only try sending the prout command to one
+path. If that fails, it will give up. There are a number of cases where
+it is reasonable to assume that sending the command down another path
+could succeed. Keep trying other available paths in these cases.
+
+Do do this, this patch adds a new error code, MPATH_PR_RETRYABLE_ERROR.
+libmpathpersist will not return this error to users. It will change it
+to MPATH_PR_OTHER if it fails trying on all the paths.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ .github/actions/spelling/expect.txt |  1 +
+ libmpathpersist/mpath_persist.h     |  3 +++
+ libmpathpersist/mpath_persist_int.c | 13 +++++++++----
+ libmpathpersist/mpath_pr_ioctl.c    | 25 ++++++++++++++-----------
+ 4 files changed, 27 insertions(+), 15 deletions(-)
+
+diff --git a/.github/actions/spelling/expect.txt b/.github/actions/spelling/expect.txt
+index def43a52..e2d4acf9 100644
+--- a/.github/actions/spelling/expect.txt
++++ b/.github/actions/spelling/expect.txt
+@@ -169,6 +169,7 @@ reconfig
+ redhat
+ restorequeueing
+ retrigger
++RETRYABLE
+ rhabarber
+ rootprefix
+ rootprefixdir
+diff --git a/libmpathpersist/mpath_persist.h b/libmpathpersist/mpath_persist.h
+index 0046f120..b83fc3bd 100644
+--- a/libmpathpersist/mpath_persist.h
++++ b/libmpathpersist/mpath_persist.h
+@@ -63,6 +63,9 @@ extern "C" {
+ #define MPATH_PR_THREAD_ERROR		14  /* pthreads error (e.g. unable to create new thread) */
+ #define MPATH_PR_OTHER			15  /*other error/warning has occurred(transport
+ 					      or driver error) */
++#define MPATH_PR_RETRYABLE_ERROR	16  /* error that might be succeed
++					       down another path. Internal
++					       only. */
+ 
+ /* PR MASK */
+ #define MPATH_F_APTPL_MASK		0x01	/* APTPL MASK*/
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index 7df74fb7..db105c6b 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -92,7 +92,7 @@ static int mpath_prin_activepath (struct multipath *mpp, int rq_servact,
+ 			}
+ 		}
+ 	}
+-	return ret;
++	return (ret == MPATH_PR_RETRYABLE_ERROR) ? MPATH_PR_OTHER : ret;
+ }
+ 
+ void *mpath_alloc_prin_response(int prin_sa)
+@@ -382,7 +382,7 @@ static int mpath_prout_reg(struct multipath *mpp,int rq_servact, int rq_scope,
+ 	}
+ 
+ 	pthread_attr_destroy(&attr);
+-	return (status);
++	return (status == MPATH_PR_RETRYABLE_ERROR) ? MPATH_PR_OTHER : status;
+ }
+ 
+ static int send_prout_activepath(char *dev, int rq_servact, int rq_scope,
+@@ -426,6 +426,7 @@ static int mpath_prout_common(struct multipath *mpp,int rq_servact, int rq_scope
+ 	int i,j, ret;
+ 	struct pathgroup *pgp = NULL;
+ 	struct path *pp = NULL;
++	bool found = false;
+ 
+ 	vector_foreach_slot (mpp->pg, pgp, j){
+ 		vector_foreach_slot (pgp->paths, pp, i){
+@@ -436,12 +437,16 @@ static int mpath_prout_common(struct multipath *mpp,int rq_servact, int rq_scope
+ 			}
+ 
+ 			condlog (3, "%s: sending pr out command to %s", mpp->wwid, pp->dev);
++			found = true;
+ 			ret = send_prout_activepath(pp->dev, rq_servact,
+ 						    rq_scope, rq_type,
+ 						    paramp, noisy);
+-			return ret ;
++			if (ret != MPATH_PR_RETRYABLE_ERROR)
++				return ret;
+ 		}
+ 	}
++	if (found)
++		return MPATH_PR_OTHER;
+ 	condlog (0, "%s: no path available", mpp->wwid);
+ 	return MPATH_PR_DMMP_ERROR;
+ }
+@@ -645,7 +650,7 @@ out1:
+ 	free (pamp);
+ out:
+ 	free (pr_buff);
+-	return (status);
++	return (status == MPATH_PR_RETRYABLE_ERROR) ? MPATH_PR_OTHER : status;
+ }
+ 
+ int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+diff --git a/libmpathpersist/mpath_pr_ioctl.c b/libmpathpersist/mpath_pr_ioctl.c
+index 093ec71b..7e1d2896 100644
+--- a/libmpathpersist/mpath_pr_ioctl.c
++++ b/libmpathpersist/mpath_pr_ioctl.c
+@@ -52,7 +52,7 @@ int prout_do_scsi_ioctl(char * dev, int rq_servact, int rq_scope,
+ 	fd = open(devname, O_RDONLY);
+ 	if(fd < 0){
+ 		condlog (1, "%s: unable to open device.", dev);
+-		return MPATH_PR_FILE_ERROR;
++		return MPATH_PR_RETRYABLE_ERROR;
+ 	}
+ 
+ 	unsigned char cdb[MPATH_PROUT_CMDLEN] =
+@@ -123,14 +123,17 @@ retry :
+ 		goto retry;
+ 	}
+ 
+-	if (((status == MPATH_PR_SENSE_NOT_READY )&& (Sensedata.ASC == 0x04)&&
+-				(Sensedata.ASCQ == 0x07))&& (retry > 0))
+-	{
+-		usleep(1000);
+-		--retry;
+-		condlog(3, "%s: retrying for sense 02/04/07."
+-			" Remaining retries = %d", dev, retry);
+-		goto retry;
++	if (status == MPATH_PR_SENSE_NOT_READY) {
++		if (Sensedata.ASC == 0x04 && Sensedata.ASCQ == 0x07 && retry > 0) {
++			usleep(1000);
++			--retry;
++			condlog(3,
++				"%s: retrying for sense 02/04/07."
++				" Remaining retries = %d",
++				dev, retry);
++			goto retry;
++		} else
++			status = MPATH_PR_RETRYABLE_ERROR;
+ 	}
+ 
+ 	close(fd);
+@@ -342,7 +345,7 @@ int prin_do_scsi_ioctl(char * dev, int rq_servact, struct prin_resp * resp, int
+ 	fd = open(devname, O_RDONLY);
+ 	if(fd < 0){
+ 		condlog(0, "%s: Unable to open device ", dev);
+-		return MPATH_PR_FILE_ERROR;
++		return MPATH_PR_RETRYABLE_ERROR;
+ 	}
+ 
+ 	if (mpath_mx_alloc_len)
+@@ -488,7 +491,7 @@ int mpath_translate_response (char * dev, struct sg_io_hdr io_hdr,
+ 	case DID_OK :
+ 		break;
+ 	default :
+-		return MPATH_PR_OTHER;
++		return MPATH_PR_RETRYABLE_ERROR;
+ 	}
+ 	switch(io_hdr.driver_status)
+ 	{

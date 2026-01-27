@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 16 Jun 2025 19:39:04 -0400
+Subject: [PATCH] libmpathpersist: remove uneeded wrapper function.
+
+mpath_send_prin_activepath() just calls prin_do_scsi_ioctl() with exactly
+the same arguments that it is passed, and returns the same return. remove
+it.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmpathpersist/mpath_persist.c | 15 ++-------------
+ libmpathpersist/mpathpr.h       |  1 -
+ 2 files changed, 2 insertions(+), 14 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist.c b/libmpathpersist/mpath_persist.c
+index 9d42704d..a7d07963 100644
+--- a/libmpathpersist/mpath_persist.c
++++ b/libmpathpersist/mpath_persist.c
+@@ -118,8 +118,8 @@ mpath_prin_activepath (struct multipath *mpp, int rq_servact,
+ 
+ 			condlog(3, "%s: sending pr in command to %s ",
+ 				mpp->wwid, pp->dev);
+-			ret = mpath_send_prin_activepath(pp->dev, rq_servact,
+-							 resp, noisy);
++			ret = prin_do_scsi_ioctl(pp->dev, rq_servact, resp,
++						 noisy);
+ 			switch(ret)
+ 			{
+ 				case MPATH_PR_SUCCESS:
+@@ -418,17 +418,6 @@ get_mpvec (vector curmp, vector pathvec, char * refwwid)
+ 	return MPATH_PR_SUCCESS ;
+ }
+ 
+-int mpath_send_prin_activepath (char * dev, int rq_servact,
+-				struct prin_resp * resp, int noisy)
+-{
+-
+-	int rc;
+-
+-	rc = prin_do_scsi_ioctl(dev, rq_servact, resp,  noisy);
+-
+-	return (rc);
+-}
+-
+ int mpath_prout_reg(struct multipath *mpp,int rq_servact, int rq_scope,
+ 	unsigned int rq_type, struct prout_param_descriptor * paramp, int noisy)
+ {
+diff --git a/libmpathpersist/mpathpr.h b/libmpathpersist/mpathpr.h
+index 5ea8cd6f..0292bc50 100644
+--- a/libmpathpersist/mpathpr.h
++++ b/libmpathpersist/mpathpr.h
+@@ -31,7 +31,6 @@ int prin_do_scsi_ioctl(char * dev, int rq_servact, struct prin_resp * resp, int
+ int prout_do_scsi_ioctl( char * dev, int rq_servact, int rq_scope,
+ 		unsigned int rq_type, struct prout_param_descriptor *paramp, int noisy);
+ void * _mpath_pr_update (void *arg);
+-int mpath_send_prin_activepath (char * dev, int rq_servact, struct prin_resp * resp, int noisy);
+ int get_mpvec (vector curmp, vector pathvec, char * refwwid);
+ void * mpath_prout_pthread_fn(void *p);
+ void dumpHex(const char* , int len, int no_ascii);

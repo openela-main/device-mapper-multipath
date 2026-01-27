@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Fri, 20 Jun 2025 14:31:13 -0400
+Subject: [PATCH] libmpathpersist: limit changing prflag in update_map_pr
+
+Do not unset mpp->prflag in update_map_pr() unless the device doesn't
+support persistent reservations or it successfully reads the registered
+keys and discovers that the device's key is not there. Also, nothing in
+the libmpathpersist ever returns MPATH_PR_SENSE_INVALID_OP. It instead
+returns MPATH_PR_ILLEGAL_REQ if the device doesn't support persistent
+reservations, so check for that instead.
+
+Also, do not even check for the registered keys in update_map_pr() if
+mpp->prflag is unset. Otherwise, multipathd will set mpp->prflag if the
+key was unregistered (and thus prflag was unset) while a path is down
+(and thus could not have its key unregistered) and then that path comes
+back up. I should note that the above issue can only occur if multipath
+is defining PR keys in /etc/multipath.conf, instead of the prkeys file.
+
+If a device has no registered keys, it must unset prflag, since that
+means it's no longer registered. Possibly its registration was removed
+by a CLEAR or PREEMPT action. But if a device has a registered key but
+it is supposed to be unregistered, it should remain unregistered, since
+that key is likely one that libmpathpersist could not unregister at the
+time.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmpathpersist/mpath_persist.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist.c b/libmpathpersist/mpath_persist.c
+index 2c35cb3e..65a81faf 100644
+--- a/libmpathpersist/mpath_persist.c
++++ b/libmpathpersist/mpath_persist.c
+@@ -123,7 +123,7 @@ mpath_prin_activepath (struct multipath *mpp, int rq_servact,
+ 			switch(ret)
+ 			{
+ 				case MPATH_PR_SUCCESS:
+-				case MPATH_PR_SENSE_INVALID_OP:
++				case MPATH_PR_ILLEGAL_REQ:
+ 					return ret;
+ 				default:
+ 					continue;
+@@ -877,6 +877,10 @@ int update_map_pr(struct multipath *mpp, struct path *pp)
+ 	int ret = MPATH_PR_OTHER, isFound;
+ 	bool was_set = (mpp->prflag == PRFLAG_SET);
+ 
++	/* If pr is explicitly unset, it must be manually set */
++	if (mpp->prflag == PRFLAG_UNSET)
++		return MPATH_PR_SKIP;
++
+ 	if (!get_be64(mpp->reservation_key))
+ 	{
+ 		/* Nothing to do. Assuming pr mgmt feature is disabled*/
+@@ -896,7 +900,6 @@ int update_map_pr(struct multipath *mpp, struct path *pp)
+ 			mpp->alias);
+ 		goto out;
+ 	}
+-	mpp->prflag = PRFLAG_UNSET;
+ 	if (pp)
+ 		ret = prin_do_scsi_ioctl(pp->dev, MPATH_PRIN_RKEY_SA, resp,
+ 					 noisy);
+@@ -906,9 +909,12 @@ int update_map_pr(struct multipath *mpp, struct path *pp)
+ 
+ 	if (ret != MPATH_PR_SUCCESS )
+ 	{
++		if (ret == MPATH_PR_ILLEGAL_REQ)
++			mpp->prflag = PRFLAG_UNSET;
+ 		condlog(0,"%s : pr in read keys service action failed Error=%d", mpp->alias, ret);
+ 		goto out;
+ 	}
++	mpp->prflag = PRFLAG_UNSET;
+ 
+ 	if (resp->prin_descriptor.prin_readkeys.additional_length == 0 )
+ 	{

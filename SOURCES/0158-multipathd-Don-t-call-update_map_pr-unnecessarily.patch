@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Fri, 20 Jun 2025 16:26:01 -0400
+Subject: [PATCH] multipathd: Don't call update_map_pr unnecessarily
+
+None of the calls to update_map_pr() outside of mpath_pr_event_handle()
+add any benefit. When update_map_pr() is called without a path, it tries
+to read the pr keys list on each usable path until it succeeds, and then
+checks the keys to see if they include the configured key.
+
+In all cases where update_map_pr() is called outside of
+mpath_pr_event_handle(), after it is called, pr_register_active_paths()
+is called if a matching key was found. pr_register_active_paths() calls
+mpath_pr_event_handle() on each usable path, which calls update_map_pr()
+with a path, so it only checks that path. If a matching key is found, it
+registers a key on the current path. The result is that after
+pr_register_active_paths() is called, update_map_pr() will be called for
+each usable path, just like update_map_pr() did. So calling
+update_map_pr() first doesn't change the results for multipathd, it just
+adds duplicate work, so remove those calls.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ multipathd/main.c | 18 +++++++-----------
+ 1 file changed, 7 insertions(+), 11 deletions(-)
+
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 3b99bbe2..bd87851d 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -555,6 +555,8 @@ pr_register_active_paths(struct multipath *mpp)
+ 
+ 	vector_foreach_slot (mpp->pg, pgp, i) {
+ 		vector_foreach_slot (pgp->paths, pp, j) {
++			if (mpp->prflag == PRFLAG_UNSET)
++				return;
+ 			if ((pp->state == PATH_UP) || (pp->state == PATH_GHOST))
+ 				mpath_pr_event_handle(pp);
+ 		}
+@@ -643,10 +645,7 @@ fail:
+ 
+ 	sync_map_state(mpp);
+ 
+-	if (mpp->prflag != PRFLAG_SET)
+-		update_map_pr(mpp, NULL);
+-	if (mpp->prflag == PRFLAG_SET)
+-		pr_register_active_paths(mpp);
++	pr_register_active_paths(mpp);
+ 
+ 	if (VECTOR_SIZE(offline_paths) != 0)
+ 		handle_orphaned_offline_paths(offline_paths);
+@@ -1268,10 +1267,9 @@ rescan:
+ 	sync_map_state(mpp);
+ 
+ 	if (retries >= 0) {
+-		if (start_waiter)
+-			update_map_pr(mpp, NULL);
+-		if (mpp->prflag == PRFLAG_SET && prflag != PRFLAG_SET)
+-				pr_register_active_paths(mpp);
++		if ((mpp->prflag == PRFLAG_SET && prflag != PRFLAG_SET) ||
++		    start_waiter)
++			pr_register_active_paths(mpp);
+ 		condlog(2, "%s [%s]: path added to devmap %s",
+ 			pp->dev, pp->dev_t, mpp->alias);
+ 		return 0;
+@@ -2884,9 +2882,7 @@ configure (struct vectors * vecs)
+ 	vector_foreach_slot(mpvec, mpp, i){
+ 		if (remember_wwid(mpp->wwid) == 1)
+ 			trigger_paths_udev_change(mpp, true);
+-		update_map_pr(mpp, NULL);
+-		if (mpp->prflag == PRFLAG_SET)
+-			pr_register_active_paths(mpp);
++		pr_register_active_paths(mpp);
+ 	}
+ 
+ 	/*

@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 15 Jul 2025 14:50:55 -0400
+Subject: [PATCH] libmpathpersist: clean up duplicate function declarations
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmpathpersist/mpath_pr_ioctl.c | 10 +++-------
+ mpathpersist/main.c              |  3 +--
+ multipathd/main.h                |  6 ------
+ 3 files changed, 4 insertions(+), 15 deletions(-)
+
+diff --git a/libmpathpersist/mpath_pr_ioctl.c b/libmpathpersist/mpath_pr_ioctl.c
+index 9cd83729..e5b25692 100644
+--- a/libmpathpersist/mpath_pr_ioctl.c
++++ b/libmpathpersist/mpath_pr_ioctl.c
+@@ -15,20 +15,16 @@
+ #include "mpath_pr_ioctl.h"
+ #include "mpath_persist.h"
+ #include "unaligned.h"
+-
+ #include "debug.h"
+ 
+ #define FILE_NAME_SIZE          256
++#include "mpathpr.h"
+ 
+ #define TIMEOUT 2000
+ #define MAXRETRY 5
+ 
+-int prin_do_scsi_ioctl(char * dev, int rq_servact, struct prin_resp *resp, int noisy);
+-int mpath_translate_response (char * dev, struct sg_io_hdr io_hdr,
+-			      SenseData_t *Sensedata);
+-void dumpHex(const char* str, int len, int no_ascii);
+-int prout_do_scsi_ioctl( char * dev, int rq_servact, int rq_scope,
+-		unsigned int rq_type, struct prout_param_descriptor *paramp, int noisy);
++int mpath_translate_response(char *dev, struct sg_io_hdr io_hdr,
++			     SenseData_t *Sensedata);
+ uint32_t  format_transportids(struct prout_param_descriptor *paramp);
+ void convert_be32_to_cpu(uint32_t *num);
+ void convert_be16_to_cpu(uint16_t *num);
+diff --git a/mpathpersist/main.c b/mpathpersist/main.c
+index 14245cc3..26c69b01 100644
+--- a/mpathpersist/main.c
++++ b/mpathpersist/main.c
+@@ -17,6 +17,7 @@
+ #include <string.h>
+ #include <errno.h>
+ #include "version.h"
++#include "mpathpr.h"
+ 
+ static const char * pr_type_strs[] = {
+ 	"obsolete [0]",
+@@ -37,8 +38,6 @@ void mpath_print_buf_readcap(struct prin_resp *pr_buff);
+ void mpath_print_buf_readfullstat(struct prin_resp *pr_buff);
+ void mpath_print_buf_readresv(struct prin_resp *pr_buff);
+ void mpath_print_buf_readkeys(struct prin_resp *pr_buff);
+-void dumpHex(const char* str, int len, int no_ascii);
+-void * mpath_alloc_prin_response(int prin_sa);
+ void mpath_print_transport_id(struct prin_fulldescr *fdesc);
+ int construct_transportid(const char * inp, struct transportid transid[], int num_transportids);
+ 
+diff --git a/multipathd/main.h b/multipathd/main.h
+index 6d2ae72a..5b5840c0 100644
+--- a/multipathd/main.h
++++ b/multipathd/main.h
+@@ -46,12 +46,6 @@ int ev_remove_map (char *, char *, int, struct vectors *);
+ int flush_map(struct multipath *, struct vectors *);
+ int set_config_state(enum daemon_status);
+ void * mpath_alloc_prin_response(int prin_sa);
+-int prin_do_scsi_ioctl(char *, int rq_servact, struct prin_resp * resp,
+-		       int noisy);
+-void dumpHex(const char * , int len, int no_ascii);
+-int prout_do_scsi_ioctl(char * , int rq_servact, int rq_scope,
+-			unsigned int rq_type,
+-			struct prout_param_descriptor *param, int noisy);
+ void handle_signals(bool);
+ int __setup_multipath (struct vectors * vecs, struct multipath * mpp,
+ 		       int reset);

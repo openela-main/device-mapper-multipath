@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 9 Sep 2025 18:55:49 -0400
+Subject: [PATCH] libmpathpersist: handle updating key race condition
+
+If a multipath device's registered key is changed, mpathpersist needs
+to update the key in multipathd before it registers the new key on the
+paths. This means that there is a time when multipathd thinks the paths
+should be using the new key, but none of them are. If a path is
+restored after mpathpersist checks which paths are usable to set the
+key on, but before it sets the key on any path, multipathd will see
+that the new key is not registered on any paths, and think that the
+key has been preempted or cleared. This will leave the path without
+a key, and possibly make multipathd think the device does not hold
+the reservation, even if it does.
+
+To avoid this, multipathd will now remember the old key when registering
+a new one. Once the registration is finished, and (un)setprstatus is
+called, multipathd will forget the old key. Until then, multipathd will
+check for either key when it looks to see if there is an existing key.
+If the registration fails and the key get reverted, multipathd will
+also forget the old key.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/prkey.c   | 16 ++++++++++++++--
+ libmultipath/structs.h |  1 +
+ multipathd/main.c      | 12 +++++++++++-
+ 3 files changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/libmultipath/prkey.c b/libmultipath/prkey.c
+index d645f813..ab45f176 100644
+--- a/libmultipath/prkey.c
++++ b/libmultipath/prkey.c
+@@ -176,10 +176,22 @@ int set_prkey(struct config *conf, struct multipath *mpp, uint64_t prkey,
+ 	}
+ 	else
+ 		ret = do_prkey(fd, mpp->wwid, NULL, PRKEY_WRITE);
+-	if (ret == 0)
++	if (ret == 0) {
++		/*
++		 * If you are reverting back to the old key, because you
++		 * did not successfully set a new key, don't remember the
++		 * key you never successfully set.
++		 */
++		if (get_be64(mpp->old_pr_key) == prkey)
++			memset(&mpp->old_pr_key, 0, 8);
++		else
++			memcpy(&mpp->old_pr_key, &mpp->reservation_key, 8);
+ 		select_reservation_key(conf, mpp);
+-	if (get_be64(mpp->reservation_key) != prkey)
++	}
++	if (get_be64(mpp->reservation_key) != prkey) {
++		memset(&mpp->old_pr_key, 0, 8);
+ 		ret = 1;
++	}
+ out_file:
+ 	close(fd);
+ out:
+diff --git a/libmultipath/structs.h b/libmultipath/structs.h
+index a67e767d..2f69e831 100644
+--- a/libmultipath/structs.h
++++ b/libmultipath/structs.h
+@@ -468,6 +468,7 @@ struct multipath {
+ 	bool fpin_must_reload;
+ 	int prhold;
+ 	bool ever_registered_pr;
++	struct be64 old_pr_key;
+ };
+ 
+ static inline int marginal_path_check_enabled(const struct multipath *mpp)
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 56d51c48..8a0d9edc 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -3751,6 +3751,7 @@ void set_pr(struct multipath *mpp)
+ {
+ 	mpp->ever_registered_pr = true;
+ 	mpp->prflag = PR_SET;
++	memset(&mpp->old_pr_key, 0, 8);
+ }
+ 
+ void unset_pr(struct multipath *mpp)
+@@ -3758,6 +3759,7 @@ void unset_pr(struct multipath *mpp)
+ 	mpp->prflag = PR_UNSET;
+ 	mpp->prhold = PR_UNSET;
+ 	mpp->sa_flags = 0;
++	memset(&mpp->old_pr_key, 0, 8);
+ }
+ 
+ /*
+@@ -3806,7 +3808,15 @@ static int update_map_pr(struct multipath *mpp, struct path *pp)
+ 			dumpHex((char *)keyp, 8, 1);
+ 		}
+ 
+-		if (!memcmp(&mpp->reservation_key, keyp, 8))
++		/*
++		 * If you are in the middle of updating a key (old_pr_key
++		 * is set) check for either the new key or the old key,
++		 * since you might be checking before any paths have
++		 * updated their keys.
++		 */
++		if (!memcmp(&mpp->reservation_key, keyp, 8) ||
++		    (get_be64(mpp->old_pr_key) &&
++		     !memcmp(&mpp->old_pr_key, keyp, 8)))
+ 			isFound = 1;
+ 	}
+ 

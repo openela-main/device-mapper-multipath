@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 23 Jun 2025 19:06:12 -0400
+Subject: [PATCH] libmpathpersist: remove useless function
+ send_prout_activepath
+
+send_prout_activepath() creates a single separate thread that just calls
+prout_do_scsi_ioctl() and it doesn't take any advantage of the work
+being done in another thread. Remove the function and call
+prout_do_scsi_ioctl() directly.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmpathpersist/mpath_persist.c | 38 ++-------------------------------
+ libmpathpersist/mpathpr.h       |  2 --
+ 2 files changed, 2 insertions(+), 38 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist.c b/libmpathpersist/mpath_persist.c
+index 65a81faf..346abe71 100644
+--- a/libmpathpersist/mpath_persist.c
++++ b/libmpathpersist/mpath_persist.c
+@@ -589,9 +589,8 @@ int mpath_prout_common(struct multipath *mpp,int rq_servact, int rq_scope,
+ 
+ 			condlog (3, "%s: sending pr out command to %s", mpp->wwid, pp->dev);
+ 			found = true;
+-			ret = send_prout_activepath(pp->dev, rq_servact,
+-						    rq_scope, rq_type,
+-						    paramp, noisy);
++			ret = prout_do_scsi_ioctl(pp->dev, rq_servact, rq_scope,
++						  rq_type, paramp, noisy);
+ 			if (ret != MPATH_PR_RETRYABLE_ERROR)
+ 				return ret;
+ 		}
+@@ -602,39 +601,6 @@ int mpath_prout_common(struct multipath *mpp,int rq_servact, int rq_scope,
+ 	return MPATH_PR_DMMP_ERROR;
+ }
+ 
+-int send_prout_activepath(char * dev, int rq_servact, int rq_scope,
+-	unsigned int rq_type, struct prout_param_descriptor * paramp, int noisy)
+-{
+-	struct prout_param param;
+-	param.rq_servact = rq_servact;
+-	param.rq_scope  = rq_scope;
+-	param.rq_type   = rq_type;
+-	param.paramp    = paramp;
+-	param.noisy = noisy;
+-	param.status = -1;
+-
+-	pthread_t thread;
+-	pthread_attr_t attr;
+-	int rc;
+-
+-	memset(&thread, 0, sizeof(thread));
+-	strlcpy(param.dev, dev, FILE_NAME_SIZE);
+-	/* Initialize and set thread joinable attribute */
+-	pthread_attr_init(&attr);
+-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+-
+-	rc = pthread_create(&thread, &attr, mpath_prout_pthread_fn, (void *)(&param));
+-	if (rc){
+-		condlog (3, "%s: failed to create thread %d", dev, rc);
+-		return MPATH_PR_THREAD_ERROR;
+-	}
+-	/* Free attribute and wait for the other threads */
+-	pthread_attr_destroy(&attr);
+-	rc = pthread_join(thread, NULL);
+-
+-	return (param.status);
+-}
+-
+ int mpath_prout_rel(struct multipath *mpp,int rq_servact, int rq_scope,
+ 	unsigned int rq_type, struct prout_param_descriptor * paramp, int noisy)
+ {
+diff --git a/libmpathpersist/mpathpr.h b/libmpathpersist/mpathpr.h
+index dd84e6d9..0d1075e5 100644
+--- a/libmpathpersist/mpathpr.h
++++ b/libmpathpersist/mpathpr.h
+@@ -41,8 +41,6 @@ int mpath_prout_common(struct multipath *mpp,int rq_servact, int rq_scope,
+ 	unsigned int rq_type,  struct prout_param_descriptor * paramp, int noisy);
+ int mpath_prout_rel(struct multipath *mpp,int rq_servact, int rq_scope,
+ 	unsigned int rq_type,  struct prout_param_descriptor * paramp, int noisy);
+-int send_prout_activepath(char * dev, int rq_servact, int rq_scope,
+-	unsigned int rq_type,   struct prout_param_descriptor * paramp, int noisy);
+ 
+ int update_prflag(char *mapname, int set);
+ int update_prkey_flags(char *mapname, uint64_t prkey, uint8_t sa_flags);

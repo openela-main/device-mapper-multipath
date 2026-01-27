@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 21 Jul 2025 19:27:17 -0400
+Subject: [PATCH] libmpathpersist: Clear prkey in multipathd before
+ unregistering
+
+When you register or switch keys in libmpathpersist, it updates
+mpp->reservation_key in multipathd before doing the registration. This
+means that any paths that come online while you are doing the
+registration get the new key registered. libmpathpersist didn't do
+this when unregistering a key. This could cause the same problem.  A
+path that got restored while unregistering the device could end up
+getting the old key registered on it. Fix this by unsetting the key
+before doing the unregister, instead of afterwards.
+
+There is still a race condition associated with updating
+mpp->reservation_key before doing the registration (but not on
+unregistration). This will be dealt with by a future patch.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmpathpersist/mpath_persist.c | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist.c b/libmpathpersist/mpath_persist.c
+index af1fdd61..ee49c27b 100644
+--- a/libmpathpersist/mpath_persist.c
++++ b/libmpathpersist/mpath_persist.c
+@@ -333,7 +333,7 @@ static int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+ 		set_ignored_key(mpp, paramp->key);
+ 
+ 	unregistering = (memcmp(&zerokey, paramp->sa_key, 8) == 0);
+-	if (mpp->prkey_source == PRKEY_SOURCE_FILE && !unregistering &&
++	if (mpp->prkey_source == PRKEY_SOURCE_FILE &&
+ 	    (rq_servact == MPATH_PROUT_REG_IGN_SA ||
+ 	     (rq_servact == MPATH_PROUT_REG_SA &&
+ 	      (!get_be64(mpp->reservation_key) ||
+@@ -414,10 +414,9 @@ static int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+ 	{
+ 	case MPATH_PROUT_REG_SA:
+ 	case MPATH_PROUT_REG_IGN_SA:
+-		if (unregistering) {
++		if (unregistering)
+ 			update_prflag(alias, 0);
+-			update_prkey(alias, 0);
+-		} else
++		else
+ 			update_prflag(alias, 1);
+ 		break;
+ 	case MPATH_PROUT_CLEAR_SA:

@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 11 Nov 2025 15:52:53 -0500
+Subject: [PATCH] mpathpersist: Fix REPORT CAPABILITIES output
+
+mpathpersist was incorrectly parsing the REPORT CAPABILITES service
+action output. In reality, the type mask is two bytes where the type
+information is stored in bits 7, 6, 5, 3, & 1 (0xea) of the first byte
+and bit 0 (0x01) of the second byte. libmpathpersist was treating these
+two bytes as a big endian 16 bit number, but mpathpersist was looking
+for bits in that number as if it was little endian number.
+
+Ideally, libmpathpersist would treat prin_capdescr.pr_type_mask as
+two bytes, like it does for the flags. But we already expose this
+as a 16 bit number, where we treated the input bytes as a big endian
+number. There's no great reason to mess with the libmpathpersist API,
+when we can just make mpathpersist treat this data like libmpathpersist
+provides it. So, fix mpathpersist to print the data out correctly.
+
+Additionally, instead of printing a 1 or a 0 to indicate if a type was
+supported or not, it was printing the value of the type flag. Also,
+Persist Through Power Loss Capable (PTPL_C) was being reported if any
+bit in flags[0] was set. Fix these as well. Reformat all of the
+capability printing lines, since it is less confusing than only
+reformatting some of them.
+
+Fixes: ae4e8a6 ("mpathpersist: Add new utility for managing persistent reservation on dm multipath device")
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmpathpersist/mpath_persist.h |  4 ++-
+ mpathpersist/main.c             | 43 +++++++++++++++++++++++----------
+ 2 files changed, 33 insertions(+), 14 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist.h b/libmpathpersist/mpath_persist.h
+index 0e4e0e53..3e2d81a0 100644
+--- a/libmpathpersist/mpath_persist.h
++++ b/libmpathpersist/mpath_persist.h
+@@ -112,7 +112,9 @@ struct prin_capdescr
+ {
+ 	uint16_t length;
+ 	uint8_t  flags[2];
+-	uint16_t pr_type_mask;
++	uint16_t pr_type_mask; /* The two bytes of the type mask are treated
++				  as a single big-endian number. So the valid
++				  type bits are 0xea01 */
+ 	uint16_t _reserved;
+ };
+ 
+diff --git a/mpathpersist/main.c b/mpathpersist/main.c
+index 28bfe410..ca5baf95 100644
+--- a/mpathpersist/main.c
++++ b/mpathpersist/main.c
+@@ -741,25 +741,42 @@ void mpath_print_buf_readcap( struct prin_resp *pr_buff)
+ 
+ 	printf("Report capabilities response:\n");
+ 
+-	printf("  Compatible Reservation Handling(CRH): %d\n", !!(pr_buff->prin_descriptor.prin_readcap.flags[0] & 0x10));
+-	printf("  Specify Initiator Ports Capable(SIP_C): %d\n",!!(pr_buff->prin_descriptor.prin_readcap.flags[0] & 0x8));
+-	printf("  All Target Ports Capable(ATP_C): %d\n",!!(pr_buff->prin_descriptor.prin_readcap.flags[0] & 0x4 ));
+-	printf("  Persist Through Power Loss Capable(PTPL_C): %d\n",!!(pr_buff->prin_descriptor.prin_readcap.flags[0]));
+-	printf("  Type Mask Valid(TMV): %d\n", !!(pr_buff->prin_descriptor.prin_readcap.flags[1] & 0x80));
+-	printf("  Allow Commands: %d\n", !!(( pr_buff->prin_descriptor.prin_readcap.flags[1] >> 4) & 0x7));
++	printf("  Compatible Reservation Handling(CRH): %d\n",
++	       !!(pr_buff->prin_descriptor.prin_readcap.flags[0] & 0x10));
++	printf("  Specify Initiator Ports Capable(SIP_C): %d\n",
++	       !!(pr_buff->prin_descriptor.prin_readcap.flags[0] & 0x8));
++	printf("  All Target Ports Capable(ATP_C): %d\n",
++	       !!(pr_buff->prin_descriptor.prin_readcap.flags[0] & 0x4));
++	printf("  Persist Through Power Loss Capable(PTPL_C): %d\n",
++	       !!(pr_buff->prin_descriptor.prin_readcap.flags[0] & 0x1));
++	printf("  Type Mask Valid(TMV): %d\n",
++	       !!(pr_buff->prin_descriptor.prin_readcap.flags[1] & 0x80));
++	printf("  Allow Commands: %d\n",
++	       !!((pr_buff->prin_descriptor.prin_readcap.flags[1] >> 4) & 0x7));
+ 	printf("  Persist Through Power Loss Active(PTPL_A): %d\n",
+-			!!(pr_buff->prin_descriptor.prin_readcap.flags[1] & 0x1));
++	       !!(pr_buff->prin_descriptor.prin_readcap.flags[1] & 0x1));
+ 
+ 	if(pr_buff->prin_descriptor.prin_readcap.flags[1] & 0x80)
+ 	{
+ 		printf("    Support indicated in Type mask:\n");
+ 
+-		printf("      %s: %d\n", pr_type_strs[7], pr_buff->prin_descriptor.prin_readcap.pr_type_mask & 0x80);
+-		printf("      %s: %d\n", pr_type_strs[6], pr_buff->prin_descriptor.prin_readcap.pr_type_mask & 0x40);
+-		printf("      %s: %d\n", pr_type_strs[5], pr_buff->prin_descriptor.prin_readcap.pr_type_mask & 0x20);
+-		printf("      %s: %d\n", pr_type_strs[3], pr_buff->prin_descriptor.prin_readcap.pr_type_mask & 0x8);
+-		printf("      %s: %d\n", pr_type_strs[1], pr_buff->prin_descriptor.prin_readcap.pr_type_mask & 0x2);
+-		printf("      %s: %d\n", pr_type_strs[8], pr_buff->prin_descriptor.prin_readcap.pr_type_mask & 0x100);
++		printf("      %s: %d\n", pr_type_strs[7],
++		       !!(pr_buff->prin_descriptor.prin_readcap.pr_type_mask &
++			  0x8000));
++		printf("      %s: %d\n", pr_type_strs[6],
++		       !!(pr_buff->prin_descriptor.prin_readcap.pr_type_mask &
++			  0x4000));
++		printf("      %s: %d\n", pr_type_strs[5],
++		       !!(pr_buff->prin_descriptor.prin_readcap.pr_type_mask &
++			  0x2000));
++		printf("      %s: %d\n", pr_type_strs[3],
++		       !!(pr_buff->prin_descriptor.prin_readcap.pr_type_mask &
++			  0x800));
++		printf("      %s: %d\n", pr_type_strs[1],
++		       !!(pr_buff->prin_descriptor.prin_readcap.pr_type_mask &
++			  0x200));
++		printf("      %s: %d\n", pr_type_strs[8],
++		       !!(pr_buff->prin_descriptor.prin_readcap.pr_type_mask & 0x1));
+ 	}
+ }
+ 

@@ -1,7 +1,7 @@
 Summary: Tools to manage multipath devices using device-mapper
 Name: device-mapper-multipath
 Version: 0.8.4
-Release: 43%{?dist}
+Release: 44%{?dist}
 License: GPLv2
 Group: System Environment/Base
 URL: http://christophe.varoqui.free.fr/
@@ -150,6 +150,7 @@ Patch00136: 0136-multipathd-Added-support-to-handle-FPIN-Li-events-fo.patch
 Patch00137: 0137-multipathd-Make-sure-to-disable-queueing-if-recovery.patch
 Patch00138: 0138-libmultipath-foreign-fix-memory-leak-in-nvme-foreign.patch
 Patch00139: 0139-mpathpersist-Fix-REPORT-CAPABILITIES-output.patch
+Patch00140: 0140-libmultipath-set-offline-whenever-path-is-not-online.patch
 
 # runtime
 Requires: %{name}-libs = %{version}-%{release}
@@ -354,6 +355,12 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
+* Fri Mar  6 2026 Benjamin Marzinski <bmarzins@redhat.com> 0.8.4-44
+- Add 0140-libmultipath-set-offline-whenever-path-is-not-online.patch
+  * Fixes RHEL-131907 ("multipathd doesn't print checker messages for
+    some offline path states")
+- Resolves: RHEL-131907
+
 * Wed Nov 19 2025 Benjamin Marzinski <bmarzins@redhat.com> 0.8.4-43
 - Add 0139-mpathpersist-Fix-REPORT-CAPABILITIES-output.patch
   * Fixes RHEL-126675 ("RHEL 8.10 mpathpersist -i --report-capabilities

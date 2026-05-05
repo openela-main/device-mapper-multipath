@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Fri, 6 Mar 2026 13:06:50 -0500
+Subject: [PATCH] libmultipath: set offline whenever path is not online or
+ pending
+
+multipathd was not setting pp->offline if the path's sysfs state was not
+in "offline", "blocked", "quiesce", or "running", even though it was
+skipping the checker because the path was actually offline. This means
+that it wasn't printing any checker message, since there was no checker
+message but the path was not labelled offline.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/discovery.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/libmultipath/discovery.c b/libmultipath/discovery.c
+index eb7a634b..7a09469a 100644
+--- a/libmultipath/discovery.c
++++ b/libmultipath/discovery.c
+@@ -1685,6 +1685,7 @@ path_offline (struct path * pp)
+ 	memset(buff, 0x0, SCSI_STATE_SIZE);
+ 	err = sysfs_attr_get_value(parent, "state", buff, SCSI_STATE_SIZE);
+ 	if (err <= 0) {
++		pp->offline = 1;
+ 		if (err == -ENXIO)
+ 			return PATH_REMOVED;
+ 		else
+@@ -1719,7 +1720,7 @@ path_offline (struct path * pp)
+ 		else if (!strncmp(buff, "live", 4))
+ 			return PATH_UP;
+ 	}
+-
++	pp->offline = 1;
+ 	return PATH_DOWN;
+ }
+ 

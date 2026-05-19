@@ -1,0 +1,133 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Wilck <mwilck@suse.com>
+Date: Thu, 9 Sep 2021 23:59:42 +0200
+Subject: [PATCH] libmultipath: improve cleanup of uevent queues on exit
+
+uevents listed on merge_node must be cleaned up, too. uevents
+cancelled while being serviced and temporary queues, likewise.
+The global uevq must be cleaned out in the uevent listener thread,
+because it might have added events after the dispatcher thread
+had already finished.
+
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/uevent.c | 49 ++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 37 insertions(+), 12 deletions(-)
+
+diff --git a/libmultipath/uevent.c b/libmultipath/uevent.c
+index 4265904b..80941f87 100644
+--- a/libmultipath/uevent.c
++++ b/libmultipath/uevent.c
+@@ -91,16 +91,25 @@ struct uevent * alloc_uevent (void)
+ 	return uev;
+ }
+ 
++static void uevq_cleanup(struct list_head *tmpq);
++
++static void cleanup_uev(void *arg)
++{
++	struct uevent *uev = arg;
++
++	uevq_cleanup(&uev->merge_node);
++	if (uev->udev)
++		udev_device_unref(uev->udev);
++	free(uev);
++}
++
+ static void uevq_cleanup(struct list_head *tmpq)
+ {
+ 	struct uevent *uev, *tmp;
+ 
+ 	list_for_each_entry_safe(uev, tmp, tmpq, node) {
+ 		list_del_init(&uev->node);
+-
+-		if (uev->udev)
+-			udev_device_unref(uev->udev);
+-		FREE(uev);
++		cleanup_uev(uev);
+ 	}
+ }
+ 
+@@ -384,14 +393,10 @@ service_uevq(struct list_head *tmpq)
+ 	list_for_each_entry_safe(uev, tmp, tmpq, node) {
+ 		list_del_init(&uev->node);
+ 
++		pthread_cleanup_push(cleanup_uev, uev);
+ 		if (my_uev_trigger && my_uev_trigger(uev, my_trigger_data))
+ 			condlog(0, "uevent trigger error");
+-
+-		uevq_cleanup(&uev->merge_node);
+-
+-		if (uev->udev)
+-			udev_device_unref(uev->udev);
+-		FREE(uev);
++		pthread_cleanup_pop(1);
+ 	}
+ }
+ 
+@@ -411,6 +416,18 @@ static void monitor_cleanup(void *arg)
+ 	udev_monitor_unref(monitor);
+ }
+ 
++static void cleanup_uevq(void *arg)
++{
++	uevq_cleanup(arg);
++}
++
++static void cleanup_global_uevq(void *arg __attribute__((unused)))
++{
++	pthread_mutex_lock(uevq_lockp);
++	uevq_cleanup(&uevq);
++	pthread_mutex_unlock(uevq_lockp);
++}
++
+ /*
+  * Service the uevent queue.
+  */
+@@ -425,6 +442,7 @@ int uevent_dispatch(int (*uev_trigger)(struct uevent *, void * trigger_data),
+ 	while (1) {
+ 		LIST_HEAD(uevq_tmp);
+ 
++		pthread_cleanup_push(cleanup_mutex, uevq_lockp);
+ 		pthread_mutex_lock(uevq_lockp);
+ 		servicing_uev = 0;
+ 		/*
+@@ -436,14 +454,17 @@ int uevent_dispatch(int (*uev_trigger)(struct uevent *, void * trigger_data),
+ 		}
+ 		servicing_uev = 1;
+ 		list_splice_init(&uevq, &uevq_tmp);
+-		pthread_mutex_unlock(uevq_lockp);
++		pthread_cleanup_pop(1);
++
+ 		if (!my_uev_trigger)
+ 			break;
++
++		pthread_cleanup_push(cleanup_uevq, &uevq_tmp);
+ 		merge_uevq(&uevq_tmp);
+ 		service_uevq(&uevq_tmp);
++		pthread_cleanup_pop(1);
+ 	}
+ 	condlog(3, "Terminating uev service queue");
+-	uevq_cleanup(&uevq);
+ 	return 0;
+ }
+ 
+@@ -600,6 +621,8 @@ int uevent_listen(struct udev *udev)
+ 
+ 	events = 0;
+ 	gettimeofday(&start_time, NULL);
++	pthread_cleanup_push(cleanup_global_uevq, NULL);
++	pthread_cleanup_push(cleanup_uevq, &uevlisten_tmp);
+ 	while (1) {
+ 		struct uevent *uev;
+ 		struct udev_device *dev;
+@@ -650,6 +673,8 @@ int uevent_listen(struct udev *udev)
+ 		gettimeofday(&start_time, NULL);
+ 		timeout = 30;
+ 	}
++	pthread_cleanup_pop(1);
++	pthread_cleanup_pop(1);
+ out:
+ 	pthread_cleanup_pop(1);
+ out_udev:

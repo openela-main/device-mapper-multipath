@@ -1,0 +1,459 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 15 Dec 2025 15:29:58 -0500
+Subject: [PATCH] libmpathpersist: fix code for skipping multipathd path
+ registration
+
+When libmpathpersist notifies multipathd that a key has been registered,
+cli_setprstatus() calls pr_register_active_paths() with a flag to let it
+know that the paths are likely already registered, and it can skip
+re-registering them, as long as the number of active paths matches the
+number of registered keys. This shortcut can fail, causing multipathd to
+not register needed paths, if either a path becomes usable and another
+becomes unusable while libmpathpersist is running or if there already
+were registered keys for I_T Nexus's that don't correspond to path
+devices.
+
+To make this shortcut work in cases like that, this commit adds a new
+multipathd command "setprstatus map <map> pathlist <pathlist>", where
+<pathlist> is a quoted, whitespace separated list of scsi path devices.
+libmpathpersist will send out the list of paths it registered the key
+on. pr_register_active_paths() will skip calling mpath_pr_event_handle()
+for paths on that list.
+
+In order to deal with the possiblity of a preempt occuring while
+libmpathpersist was running, the code still needs to check that it has
+the expected number of keys.
+
+Fixes: f7d6cd17 ("multipathd: Fix race while registering PR key")
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmpathpersist/mpath_persist.c  |  6 +--
+ libmpathpersist/mpath_updatepr.c | 50 ++++++++++++++++++-------
+ libmpathpersist/mpathpr.h        |  2 +-
+ multipathd/cli.c                 |  2 +
+ multipathd/cli.h                 |  2 +
+ multipathd/cli_handlers.c        | 37 +++++++++++++++++--
+ multipathd/cli_handlers.h        |  1 +
+ multipathd/main.c                | 63 +++++++++++++++++++++-----------
+ multipathd/main.h                |  4 +-
+ multipathd/multipathd.8          | 10 ++++-
+ 10 files changed, 132 insertions(+), 45 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist.c b/libmpathpersist/mpath_persist.c
+index 6cb56dab..ab8fa630 100644
+--- a/libmpathpersist/mpath_persist.c
++++ b/libmpathpersist/mpath_persist.c
+@@ -527,12 +527,12 @@ static int do_mpath_persistent_reserve_out(vector curmp, vector pathvec, int fd,
+ 	case MPATH_PROUT_REG_SA:
+ 	case MPATH_PROUT_REG_IGN_SA:
+ 		if (unregistering)
+-			update_prflag(alias, 0);
++			update_prflag(mpp, 0);
+ 		else
+-			update_prflag(alias, 1);
++			update_prflag(mpp, 1);
+ 		break;
+ 	case MPATH_PROUT_CLEAR_SA:
+-		update_prflag(alias, 0);
++		update_prflag(mpp, 0);
+ 		if (mpp->prkey_source == PRKEY_SOURCE_FILE)
+ 			update_prkey(alias, 0);
+ 		break;
+diff --git a/libmpathpersist/mpath_updatepr.c b/libmpathpersist/mpath_updatepr.c
+index bfa6e089..e24432bb 100644
+--- a/libmpathpersist/mpath_updatepr.c
++++ b/libmpathpersist/mpath_updatepr.c
+@@ -19,9 +19,9 @@
+ #include "memory.h"
+ #include "mpathpr.h"
+ #include "structs.h"
++#include "strbuf.h"
+ 
+-
+-static char *do_pr(char *alias, char *str)
++static char *do_pr(char *alias, const char *str)
+ {
+ 	int fd;
+ 	char *reply;
+@@ -51,24 +51,26 @@ static char *do_pr(char *alias, char *str)
+ 	return reply;
+ }
+ 
+-static int do_update_pr(char *alias, char *cmd, char *key)
++static int do_update_pr(char *alias, char *cmd, const char *data)
+ {
+-	char str[256];
++	STRBUF_ON_STACK(buf);
+ 	char *reply = NULL;
+ 	int ret = -1;
+ 
+-	if (key)
+-		snprintf(str,sizeof(str),"%s map %s key %s", cmd, alias, key);
++	if (data)
++		print_strbuf(&buf, "%s map %s %s %s", cmd, alias,
++			     strcmp(cmd, "setprkey") ? "pathlist" : "key", data);
+ 	else
+-		snprintf(str,sizeof(str),"%s map %s", cmd, alias);
++		print_strbuf(&buf, "%s map %s", cmd, alias);
+ 
+-	reply = do_pr(alias, str);
++	reply = do_pr(alias, get_strbuf_str(&buf));
+ 	if (reply) {
+-		condlog (2, "%s: message=%s reply=%s", alias, str, reply);
+-		if (reply && strncmp(reply,"ok", 2) == 0)
++		if (strncmp(reply, "ok", 2) == 0)
+ 			ret = 0;
+ 		else
+ 			ret = -1;
++		condlog(ret ? 0 : 4, "%s: message=%s reply=%s", alias,
++			get_strbuf_str(&buf), reply);
+ 	}
+ 
+ 	free(reply);
+@@ -104,9 +106,31 @@ int get_prhold(char *mapname) {
+ 	return do_get_pr(mapname, "getprhold");
+ }
+ 
+-int update_prflag(char *mapname, int set) {
+-	return do_update_pr(mapname, (set)? "setprstatus" : "unsetprstatus",
+-			    NULL);
++int update_prflag(struct multipath *mpp, int set)
++{
++	STRBUF_ON_STACK(buf);
++	int i, j;
++	bool first = true;
++	struct pathgroup *pgp = NULL;
++	struct path *pp = NULL;
++
++	if (!set)
++		return do_update_pr(mpp->alias, "unsetprstatus", NULL);
++
++	append_strbuf_str(&buf, "\"");
++	vector_foreach_slot (mpp->pg, pgp, j) {
++		vector_foreach_slot (pgp->paths, pp, i) {
++			if (pp->state == PATH_UP || pp->state == PATH_GHOST) {
++				if (first) {
++					append_strbuf_str(&buf, pp->dev);
++					first = false;
++				} else
++					print_strbuf(&buf, " %s", pp->dev_t);
++			}
++		}
++	}
++	append_strbuf_str(&buf, "\"");
++	return do_update_pr(mpp->alias, "setprstatus", get_strbuf_str(&buf));
+ }
+ 
+ int update_prhold(char *mapname, bool set) {
+diff --git a/libmpathpersist/mpathpr.h b/libmpathpersist/mpathpr.h
+index 69f402f2..67d04247 100644
+--- a/libmpathpersist/mpathpr.h
++++ b/libmpathpersist/mpathpr.h
+@@ -40,7 +40,7 @@ int mpath_prout_rel(struct multipath *mpp,int rq_servact, int rq_scope,
+ 	unsigned int rq_type, struct prout_param_descriptor *paramp, int noisy,
+ 	bool unregister);
+ 
+-int update_prflag(char *mapname, int set);
++int update_prflag(struct multipath *mpp, int set);
+ int update_prkey_flags(char *mapname, uint64_t prkey, uint8_t sa_flags);
+ int get_prflag(char *mapname);
+ int get_prhold(char *mapname);
+diff --git a/multipathd/cli.c b/multipathd/cli.c
+index d33b571d..9e833b02 100644
+--- a/multipathd/cli.c
++++ b/multipathd/cli.c
+@@ -226,6 +226,7 @@ load_keys (void)
+ 	r += add_key(keys, "getprhold", GETPRHOLD, 0);
+ 	r += add_key(keys, "setprhold", SETPRHOLD, 0);
+ 	r += add_key(keys, "unsetprhold", UNSETPRHOLD, 0);
++	r += add_key(keys, "pathlist", PATHLIST, 1);
+ 
+ 	if (r) {
+ 		free_keys(keys);
+@@ -572,6 +573,7 @@ cli_init (void) {
+ 	add_handler(SHUTDOWN, NULL);
+ 	add_handler(GETPRSTATUS+MAP, NULL);
+ 	add_handler(SETPRSTATUS+MAP, NULL);
++	add_handler(SETPRSTATUS+MAP+PATHLIST, NULL);
+ 	add_handler(UNSETPRSTATUS+MAP, NULL);
+ 	add_handler(GETPRKEY+MAP, NULL);
+ 	add_handler(SETPRKEY+MAP+KEY, NULL);
+diff --git a/multipathd/cli.h b/multipathd/cli.h
+index 4d12f8fd..17344cb4 100644
+--- a/multipathd/cli.h
++++ b/multipathd/cli.h
+@@ -50,6 +50,7 @@ enum {
+ 	__GETPRHOLD,
+ 	__SETPRHOLD,
+ 	__UNSETPRHOLD,
++	__PATHLIST,
+ };
+ 
+ #define LIST		(1 << __LIST)
+@@ -99,6 +100,7 @@ enum {
+ #define GETPRHOLD	(1ULL << __GETPRHOLD)
+ #define SETPRHOLD	(1ULL << __SETPRHOLD)
+ #define UNSETPRHOLD	(1ULL << __UNSETPRHOLD)
++#define PATHLIST	(1ULL << __PATHLIST)
+ 
+ #define INITIAL_REPLY_LEN	1200
+ 
+diff --git a/multipathd/cli_handlers.c b/multipathd/cli_handlers.c
+index 0c63ca9a..f183fceb 100644
+--- a/multipathd/cli_handlers.c
++++ b/multipathd/cli_handlers.c
+@@ -32,6 +32,7 @@
+ #include "foreign.h"
+ #include "strbuf.h"
+ #include "cli_handlers.h"
++#include <ctype.h>
+ 
+ #define SET_REPLY_AND_LEN(__rep, __len, string_literal)			\
+ 	do {								\
+@@ -1308,8 +1309,8 @@ cli_getprstatus (void * v, char ** reply, int * len, void * data)
+ 	return 0;
+ }
+ 
+-int
+-cli_setprstatus(void * v, char ** reply, int * len, void * data)
++static int do_setprstatus(void * v, char ** reply, int * len, void * data,
++			  const struct _vector *registered_paths)
+ {
+ 	struct multipath * mpp;
+ 	struct vectors * vecs = (struct vectors *)data;
+@@ -1324,7 +1325,7 @@ cli_setprstatus(void * v, char ** reply, int * len, void * data)
+ 
+ 	if (mpp->prflag != PR_SET) {
+ 		set_pr(mpp);
+-		pr_register_active_paths(mpp, true);
++		pr_register_active_paths(mpp, registered_paths);
+ 		if (mpp->prflag == PR_SET)
+ 			condlog(2, "%s: prflag set", param);
+ 		else
+@@ -1336,6 +1337,36 @@ cli_setprstatus(void * v, char ** reply, int * len, void * data)
+ 	return 0;
+ }
+ 
++int
++cli_setprstatus(void * v, char ** reply, int * len, void * data)
++{
++	return do_setprstatus(v, reply, len, data, NULL);
++}
++
++int
++cli_setprstatus_list(void * v, char ** reply, int * len, void *data)
++{
++	int r;
++	struct _vector registered_paths_vec = {.allocated = 0};
++	vector registered_paths
++		__attribute__((cleanup(cleanup_reset_vec))) = &registered_paths_vec;
++	char *ptr = get_keyparam(v, PATHLIST);
++
++	while (isspace(*ptr))
++		ptr++;
++	while (*ptr) {
++		if (!vector_alloc_slot(registered_paths))
++			return -ENOMEM;
++		vector_set_slot(registered_paths, ptr);
++		while (*ptr && !isspace(*ptr))
++			ptr++;
++		while (isspace(*ptr))
++			*ptr++ = '\0';
++	}
++	r = do_setprstatus(v, reply, len, data, registered_paths);
++	return r;
++}
++
+ int
+ cli_unsetprstatus(void * v, char ** reply, int * len, void * data)
+ {
+diff --git a/multipathd/cli_handlers.h b/multipathd/cli_handlers.h
+index 348c8485..28b6f2bb 100644
+--- a/multipathd/cli_handlers.h
++++ b/multipathd/cli_handlers.h
+@@ -46,6 +46,7 @@ int cli_shutdown(void * v, char ** reply, int * len, void * data);
+ int cli_reassign (void * v, char ** reply, int * len, void * data);
+ int cli_getprstatus(void * v, char ** reply, int * len, void * data);
+ int cli_setprstatus(void * v, char ** reply, int * len, void * data);
++int cli_setprstatus_list(void * v, char ** reply, int * len, void * data);
+ int cli_unsetprstatus(void * v, char ** reply, int * len, void * data);
+ int cli_getprkey(void * v, char ** reply, int * len, void * data);
+ int cli_setprkey(void * v, char ** reply, int * len, void * data);
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 2526d8d1..09d26fe2 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -548,28 +548,47 @@ flush_map_nopaths(struct multipath *mpp, struct vectors *vecs) {
+ 	return true;
+ }
+ 
+-void pr_register_active_paths(struct multipath *mpp, bool check_nr_active)
++/*
++ * If reg_paths in non-NULL, it is a vector of paths that libmpathpersist
++ * registered. If the number of registered keys is smaller than the number
++ * of registered paths, then likely a preempt that occurred while
++ * libmpathpersist was registering the key. As long as there are still some
++ * registered keys, treat the preempt as happening first, and make sure to
++ * register keys on all the paths. If the number of registered keys is at
++ * least as large as the number of registered paths, then no preempt happened,
++ * and multipathd does not need to re-register the paths that libmpathpersist
++ * handled
++ */
++void pr_register_active_paths(struct multipath *mpp, const struct _vector *reg_paths)
+ {
+-	unsigned int i, j, nr_keys = 0;
+-	unsigned int nr_active = 0;
++	unsigned int i, j, k, nr_keys = 0;
++	unsigned int wanted_nr = VECTOR_SIZE(reg_paths);
+ 	struct path *pp;
+ 	struct pathgroup *pgp;
+-
+-	if (check_nr_active) {
+-		nr_active = count_active_paths(mpp);
+-		if (!nr_active)
+-			return;
+-	}
++	char *pathname;
+ 
+ 	vector_foreach_slot (mpp->pg, pgp, i) {
+ 		vector_foreach_slot (pgp->paths, pp, j) {
+ 			if (mpp->prflag == PR_UNSET)
+ 				return;
+-			if (pp->state == PATH_UP || pp->state == PATH_GHOST) {
+-				nr_keys = mpath_pr_event_handle(pp, nr_keys, nr_active);
+-				if (check_nr_active && nr_keys == nr_active)
+-					return;
++			if (pp->state != PATH_UP && pp->state != PATH_GHOST)
++				continue;
++			if (wanted_nr && nr_keys) {
++				vector_foreach_slot (reg_paths, pathname, k) {
++					if (strcmp(pp->dev_t, pathname) == 0) {
++						goto skip;
++					}
++				}
+ 			}
++			nr_keys = mpath_pr_event_handle(pp, nr_keys, wanted_nr);
++			if (nr_keys && nr_keys < wanted_nr) {
++				/*
++				 * Incorrect number of registered keys. Need
++				 * to register all devices
++				 */
++				wanted_nr = 0;
++			}
++		skip:; /* a statement must follow a label on pre C23 clang */
+ 		}
+ 	}
+ }
+@@ -599,8 +618,7 @@ handle_orphaned_offline_paths(vector offline_paths)
+ 			pp->add_when_online = true;
+ }
+ 
+-static void
+-cleanup_reset_vec(struct _vector **v)
++void cleanup_reset_vec(struct _vector **v)
+ {
+ 	vector_reset(*v);
+ }
+@@ -656,7 +674,7 @@ fail:
+ 
+ 	sync_map_state(mpp);
+ 
+-	pr_register_active_paths(mpp, false);
++	pr_register_active_paths(mpp, NULL);
+ 
+ 	if (VECTOR_SIZE(offline_paths) != 0)
+ 		handle_orphaned_offline_paths(offline_paths);
+@@ -1279,7 +1297,7 @@ rescan:
+ 
+ 	if (retries >= 0) {
+ 		if ((mpp->prflag == PR_SET && prflag != PR_SET) || start_waiter)
+-			pr_register_active_paths(mpp, false);
++			pr_register_active_paths(mpp, NULL);
+ 		condlog(2, "%s [%s]: path added to devmap %s",
+ 			pp->dev, pp->dev_t, mpp->alias);
+ 		return 0;
+@@ -1875,6 +1893,7 @@ uxlsnrloop (void * ap)
+ 	set_unlocked_handler_callback(SHUTDOWN, cli_shutdown);
+ 	set_handler_callback(GETPRSTATUS|MAP, cli_getprstatus);
+ 	set_handler_callback(SETPRSTATUS|MAP, cli_setprstatus);
++	set_handler_callback(SETPRSTATUS|MAP|PATHLIST, cli_setprstatus_list);
+ 	set_handler_callback(UNSETPRSTATUS|MAP, cli_unsetprstatus);
+ 	set_handler_callback(FORCEQ|DAEMON, cli_force_no_daemon_q);
+ 	set_handler_callback(RESTOREQ|DAEMON, cli_restore_no_daemon_q);
+@@ -2581,7 +2600,7 @@ check_path (struct vectors * vecs, struct path * pp, unsigned int ticks)
+ 				mpath_pr_event_handle(pp, 0, 0);
+ 				if (pp->mpp->prflag == PR_SET &&
+ 				    prflag != PR_SET)
+-					pr_register_active_paths(pp->mpp, false);
++					pr_register_active_paths(pp->mpp, NULL);
+ 			}
+ 		}
+ 
+@@ -2950,7 +2969,7 @@ configure (struct vectors * vecs)
+ 	vector_foreach_slot(mpvec, mpp, i){
+ 		if (remember_wwid(mpp->wwid) == 1)
+ 			trigger_paths_udev_change(mpp, true);
+-		pr_register_active_paths(mpp, false);
++		pr_register_active_paths(mpp, NULL);
+ 	}
+ 
+ 	/*
+@@ -3933,8 +3952,8 @@ static int update_map_pr(struct multipath *mpp, struct path *pp, unsigned int *n
+  *
+  * nr_keys_wanted: Only used if nr_keys_needed is 0, so we don't know how
+  * many keys we currently have. If nr_keys_wanted in non-zero and the
+- * number of keys found by the initial call to update_map_pr() matches it,
+- * exit early, since we have all the keys we are expecting.
++ * number of keys found by the initial call to update_map_pr() is at least
++ * as large as it, exit early, since we have all the keys we are expecting.
+  *
+  * The function returns the number of keys that are registered or 0 if
+  * it's unknown.
+@@ -3957,7 +3976,7 @@ mpath_pr_event_handle(struct path *pp, unsigned int nr_keys_needed,
+ 		nr_keys_needed = 1;
+ 		if (update_map_pr(mpp, pp, &nr_keys_needed) != MPATH_PR_SUCCESS)
+ 			return 0;
+-		if (nr_keys_wanted && nr_keys_wanted == nr_keys_needed)
++		if (nr_keys_wanted && nr_keys_wanted <= nr_keys_needed)
+ 			return nr_keys_needed;
+ 	}
+ 
+diff --git a/multipathd/main.h b/multipathd/main.h
+index 8a4c5f88..ea12455f 100644
+--- a/multipathd/main.h
++++ b/multipathd/main.h
+@@ -60,5 +60,7 @@ int resize_map(struct multipath *mpp, unsigned long long size,
+ 	       struct vectors *vecs);
+ void set_pr(struct multipath *mpp);
+ void unset_pr(struct multipath *mpp);
+-void pr_register_active_paths(struct multipath *mpp, bool check_active_nr);
++void pr_register_active_paths(struct multipath *mpp,
++			      const struct _vector *registered_paths);
++void cleanup_reset_vec(struct _vector **v);
+ #endif /* MAIN_H */
+diff --git a/multipathd/multipathd.8 b/multipathd/multipathd.8
+index 2ed036d4..0a76f3e3 100644
+--- a/multipathd/multipathd.8
++++ b/multipathd/multipathd.8
+@@ -324,11 +324,17 @@ will not be disabled when the daemon stops.
+ Restores configured queue_without_daemon mode.
+ .
+ .TP
+-.B map|multipath $map setprstatus
++.B setprstatus map|multipath $map
+ Enable persistent reservation management on $map.
+ .
+ .TP
+-.B map|multipath $map unsetprstatus
++.B setprstatus map|multipath $map pathlist $pathlist
++Enable persistent reservation management on $map, and notify multipathd of
++the paths that have been registered, so it doesn't attempt to re-register
++them.
++.
++.TP
++.B unsetprstatus map|multipath $map
+ Disable persistent reservation management on $map.
+ .
+ .TP

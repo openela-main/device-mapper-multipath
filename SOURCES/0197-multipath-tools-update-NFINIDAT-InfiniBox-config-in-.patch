@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xose Vazquez Perez <xose.vazquez@gmail.com>
+Date: Sat, 16 Aug 2025 20:16:23 +0200
+Subject: [PATCH] multipath-tools: update NFINIDAT/InfiniBox config in hwtable
+
+New recommended values for SLES-15, RHEL-8, and Ubuntu-22, or above:
+https://lh3.googleusercontent.com/pw/AP1GczMchJ6bcMIohp_g3Ik5DS6BZv_IW0iwaEXf968sJsR8fr_p3mR4ThRpmHpZE_VMnlcV8j0uuuI2kz-eoqekRCUBxyTBKS7n-4WFMsUiecq8i7nIjEuhfZFrV54DBQLDzGt6ofakAAF1L-ZcAuCWW18=w0-h0
+
+device {
+   vendor "NFINIDAT"
+   product "InfiniBox"
+   path_grouping_policy "group_by_prio"
+   path_checker "tur"
+   features 0
+   hardware_handler "1 alua"
+   prio "alua"
+   rr_weight "priorities"
+   no_path_retry "queue"
+   rr_min_io 1
+   rr_min_io_rq 1
+   flush_on_last_del "yes"
+   fast_io_fail_tmo 15
+   dev_loss_tmo "infinity"
+   path_selector "service-time 0"
+   failback "immediate"
+   detect_prio "no"
+   user_friendly_names "no"
+  }
+
+Cc: Martin Wilck <mwilck@suse.com>
+Cc: Benjamin Marzinski <bmarzins@redhat.com>
+Cc: Christophe Varoqui <christophe.varoqui@opensvc.com>
+Cc: DM_DEVEL-ML <dm-devel@lists.linux.dev>
+Signed-off-by: Xose Vazquez Perez <xose.vazquez@gmail.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/hwtable.c | 11 ++++-------
+ 1 file changed, 4 insertions(+), 7 deletions(-)
+
+diff --git a/libmultipath/hwtable.c b/libmultipath/hwtable.c
+index 2d359829..188ad5e0 100644
+--- a/libmultipath/hwtable.c
++++ b/libmultipath/hwtable.c
+@@ -1124,16 +1124,13 @@ static struct hwentry default_hw[] = {
+ 		.vendor        = "NFINIDAT",
+ 		.product       = "InfiniBox",
+ 		.pgpolicy      = GROUP_BY_PRIO,
+-		.pgfailback    = 30,
++		.pgfailback    = -FAILBACK_IMMEDIATE,
+ 		.prio_name     = PRIO_ALUA,
+-		.selector      = "round-robin 0",
+-		.rr_weight     = RR_WEIGHT_PRIO,
+-		.no_path_retry = NO_PATH_RETRY_FAIL,
+-		.minio         = 1,
+-		.minio_rq      = 1,
++		.no_path_retry = NO_PATH_RETRY_QUEUE,
+ 		.flush_on_last_del = FLUSH_ALWAYS,
+ 		.fast_io_fail  = 15,
+-		.dev_loss      = 15,
++		.dev_loss      = MAX_DEV_LOSS_TMO,
++		.detect_prio   = DETECT_PRIO_OFF,
+ 	},
+ 	/*
+ 	 * Kaminario

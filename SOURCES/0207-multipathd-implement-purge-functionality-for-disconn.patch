@@ -1,0 +1,752 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brian Bunker <brian@purestorage.com>
+Date: Fri, 9 Jan 2026 16:50:43 -0800
+Subject: [PATCH] multipathd: implement purge functionality for disconnected
+ paths
+
+Implement automatic purging of paths that have been disconnected at the
+storage target (e.g., LUN unmapped). This builds on the purge_disconnected
+configuration option added in the previous patch.
+
+This adds:
+- New PATH_DISCONNECTED checker state to signal disconnection
+- TUR checker support for detecting LUN NOT SUPPORTED (ASC/ASCQ 0x25/0x00)
+- Purge thread (purgeloop) that removes paths via sysfs delete attribute
+- State machine to track disconnection and delay purging
+- Conversion of PATH_DISCONNECTED to PATH_DOWN for normal processing
+
+The purge thread runs independently and processes paths that have been
+marked for purging by the checker thread. Paths are only purged after
+remaining disconnected for delay_wait_checks intervals to avoid removing
+paths that are temporarily flapping.
+
+Signed-off-by: Brian Bunker <brian@purestorage.com>
+Signed-off-by: Krishna Kant <krishna.kant@purestorage.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/checkers.c     |   2 +
+ libmultipath/checkers.h     |  15 +-
+ libmultipath/checkers/tur.c |  10 ++
+ libmultipath/discovery.c    |  17 ++
+ libmultipath/io_err_stat.c  |   1 +
+ libmultipath/print.c        |   2 +
+ libmultipath/structs.h      |  14 ++
+ multipathd/Makefile         |   2 +-
+ multipathd/main.c           |  74 +++++++-
+ multipathd/purge.c          | 326 ++++++++++++++++++++++++++++++++++++
+ multipathd/purge.h          |  41 +++++
+ 11 files changed, 496 insertions(+), 8 deletions(-)
+ create mode 100644 multipathd/purge.c
+ create mode 100644 multipathd/purge.h
+
+diff --git a/libmultipath/checkers.c b/libmultipath/checkers.c
+index 9eb3e261..e1b84df0 100644
+--- a/libmultipath/checkers.c
++++ b/libmultipath/checkers.c
+@@ -39,6 +39,7 @@ static const char *checker_state_names[PATH_MAX_STATE] = {
+ 	[PATH_TIMEOUT] = "timeout",
+ 	[PATH_REMOVED] = "removed",
+ 	[PATH_DELAYED] = "delayed",
++	[PATH_DISCONNECTED] = "disconnected",
+ };
+ 
+ static LIST_HEAD(checkers);
+@@ -343,6 +344,7 @@ static const char *generic_msg[CHECKER_GENERIC_MSGTABLE_SIZE] = {
+ 	[CHECKER_MSGID_DOWN] = " reports path is down",
+ 	[CHECKER_MSGID_GHOST] = " reports path is ghost",
+ 	[CHECKER_MSGID_UNSUPPORTED] = " doesn't support this device",
++	[CHECKER_MSGID_DISCONNECTED] = " no access to this device",
+ };
+ 
+ const char *checker_message(const struct checker *c)
+diff --git a/libmultipath/checkers.h b/libmultipath/checkers.h
+index 2fd1d1c6..2f32f612 100644
+--- a/libmultipath/checkers.h
++++ b/libmultipath/checkers.h
+@@ -66,6 +66,15 @@
+  *   delay_watch_checks checks, when it comes back up again, it will not
+  *   be marked as up until it has been up for delay_wait_checks checks.
+  *   During this time, it is marked as "delayed"
++ *
++ * PATH_DISCONNECTED is a special ephemeral state used to signal that a path
++ * has been disconnected at the storage target (e.g., LUN unmapped). When a
++ * checker returns PATH_DISCONNECTED:
++ *   1. The path's pp->disconnected field is set to track purge state
++ *   2. The state is immediately converted to PATH_DOWN for normal processing
++ *   3. If purge_disconnected is enabled, the path will be removed via sysfs
++ * This state should never be stored in pp->state or pp->chkrstate; it exists
++ * only as a transient return value from checkers to trigger special handling.
+  */
+ enum path_check_state {
+ 	PATH_WILD = 0,
+@@ -78,6 +87,7 @@ enum path_check_state {
+ 	PATH_TIMEOUT,
+ 	PATH_REMOVED,
+ 	PATH_DELAYED,
++	PATH_DISCONNECTED, /* Ephemeral: mapped to PATH_DOWN */
+ 	PATH_MAX_STATE
+ };
+ 
+@@ -113,9 +123,10 @@ enum {
+ 	CHECKER_MSGID_DOWN,
+ 	CHECKER_MSGID_GHOST,
+ 	CHECKER_MSGID_UNSUPPORTED,
++	CHECKER_MSGID_DISCONNECTED,
+ 	CHECKER_GENERIC_MSGTABLE_SIZE,
+-	CHECKER_FIRST_MSGID = 100,	/* lowest msgid for checkers */
+-	CHECKER_MSGTABLE_SIZE = 100,	/* max msg table size for checkers */
++	CHECKER_FIRST_MSGID = 100,   /* lowest msgid for checkers */
++	CHECKER_MSGTABLE_SIZE = 100, /* max msg table size for checkers */
+ };
+ 
+ struct checker_class;
+diff --git a/libmultipath/checkers/tur.c b/libmultipath/checkers/tur.c
+index d82f7dbc..370a02a6 100644
+--- a/libmultipath/checkers/tur.c
++++ b/libmultipath/checkers/tur.c
+@@ -188,6 +188,16 @@ retry:
+ 				*msgid = CHECKER_MSGID_GHOST;
+ 				return PATH_GHOST;
+ 			}
++		} else if (key == 0x5) {
++			/* Illegal request */
++			if (asc == 0x25 && ascq == 0x00) {
++				/*
++				 * LUN NOT SUPPORTED: unmapped at target.
++				 * Signals pp->disconnected, becomes PATH_DOWN.
++				 */
++				*msgid = CHECKER_MSGID_DISCONNECTED;
++				return PATH_DISCONNECTED;
++			}
+ 		}
+ 		*msgid = CHECKER_MSGID_DOWN;
+ 		return PATH_DOWN;
+diff --git a/libmultipath/discovery.c b/libmultipath/discovery.c
+index 186423e0..c529f336 100644
+--- a/libmultipath/discovery.c
++++ b/libmultipath/discovery.c
+@@ -2416,8 +2416,25 @@ int pathinfo(struct path *pp, struct config *conf, int mask)
+ 			    pp->state == PATH_UNCHECKED ||
+ 			    pp->state == PATH_WILD)
+ 				pp->chkrstate = pp->state = newstate;
++			/*
++			 * PATH_TIMEOUT and PATH_DISCONNECTED are ephemeral
++			 * states that should never be stored in pp->state.
++			 * Convert them to PATH_DOWN immediately.
++			 */
+ 			if (pp->state == PATH_TIMEOUT)
+ 				pp->state = PATH_DOWN;
++			if (pp->state == PATH_DISCONNECTED) {
++				int purge_enabled = pp->mpp &&
++						    pp->mpp->purge_disconnected ==
++							    PURGE_DISCONNECTED_ON;
++				if (purge_enabled &&
++				    pp->disconnected == NOT_DISCONNECTED) {
++					condlog(2, "%s: mark path for purge",
++						pp->dev);
++					pp->disconnected = DISCONNECTED_READY_FOR_PURGE;
++				}
++				pp->state = PATH_DOWN;
++			}
+ 			if (pp->state == PATH_UP && !pp->size) {
+ 				condlog(3, "%s: device size is 0, "
+ 					"path unusable", pp->dev);
+diff --git a/libmultipath/io_err_stat.c b/libmultipath/io_err_stat.c
+index d8d91f64..d744d50e 100644
+--- a/libmultipath/io_err_stat.c
++++ b/libmultipath/io_err_stat.c
+@@ -380,6 +380,7 @@ static void account_async_io_state(struct io_err_stat_path *pp, int rc)
+ 	switch (rc) {
+ 	case PATH_DOWN:
+ 	case PATH_TIMEOUT:
++	case PATH_DISCONNECTED:
+ 		pp->io_err_nr++;
+ 		break;
+ 	case PATH_UNCHECKED:
+diff --git a/libmultipath/print.c b/libmultipath/print.c
+index ff224bc4..42d1d44c 100644
+--- a/libmultipath/print.c
++++ b/libmultipath/print.c
+@@ -487,6 +487,8 @@ snprint_chk_state (struct strbuf *buff, const struct path * pp)
+ 		return append_strbuf_str(buff, "i/o timeout");
+ 	case PATH_DELAYED:
+ 		return append_strbuf_str(buff, "delayed");
++	case PATH_DISCONNECTED:
++		return append_strbuf_str(buff, "disconnected");
+ 	default:
+ 		return append_strbuf_str(buff, "undef");
+ 	}
+diff --git a/libmultipath/structs.h b/libmultipath/structs.h
+index e1969b95..32643684 100644
+--- a/libmultipath/structs.h
++++ b/libmultipath/structs.h
+@@ -185,6 +185,18 @@ enum purge_disconnected_states {
+ 	PURGE_DISCONNECTED_ON = YNU_YES, /* Purge disconnected paths */
+ };
+ 
++/*
++ * Path disconnection state (per path)
++ * Tracks whether a path has been marked for purge and whether it's already queued.
++ */
++enum path_disconnected_state {
++	NOT_DISCONNECTED,	       /* Path is not disconnected */
++	DISCONNECTED_READY_FOR_PURGE,  /* Path is disconnected and ready to be
++					  queued for purge */
++	DISCONNECTED_QUEUED_FOR_PURGE, /* Path is disconnected and already
++					  queued for purge */
++};
++
+ #define PROTOCOL_UNSET -1
+ 
+ enum scsi_protocol {
+@@ -355,6 +367,8 @@ struct path {
+ 	int state;
+ 	int dmstate;
+ 	int chkrstate;
++	enum path_disconnected_state disconnected; /* Marked for purge due to
++						      disconnection */
+ 	int failcount;
+ 	int priority;
+ 	int pgindex;
+diff --git a/multipathd/Makefile b/multipathd/Makefile
+index 00342464..a49c4973 100644
+--- a/multipathd/Makefile
++++ b/multipathd/Makefile
+@@ -46,7 +46,7 @@ ifeq ($(ENABLE_DMEVENTS_POLL),0)
+ endif
+ 
+ OBJS = main.o pidfile.o uxlsnr.o uxclnt.o cli.o cli_handlers.o waiter.o \
+-       dmevents.o init_unwinder.o
++       dmevents.o init_unwinder.o purge.o
+ 
+ ifeq ($(FPIN_SUPPORT),1)
+ OBJS += fpin_handlers.o
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 9beb0e06..d91a4d49 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -84,6 +84,7 @@
+ #include "io_err_stat.h"
+ #include "wwids.h"
+ #include "foreign.h"
++#include "purge.h"
+ #include "../third-party/valgrind/drd.h"
+ #include "init_unwinder.h"
+ 
+@@ -135,11 +136,11 @@ static volatile enum daemon_status running_state = DAEMON_INIT;
+ pid_t daemon_pid;
+ static pthread_mutex_t config_lock = PTHREAD_MUTEX_INITIALIZER;
+ static pthread_cond_t config_cond;
+-static pthread_t check_thr, uevent_thr, uxlsnr_thr, uevq_thr, dmevent_thr,
+-	fpin_thr, fpin_consumer_thr;
+-static bool check_thr_started, uevent_thr_started, uxlsnr_thr_started,
+-	uevq_thr_started, dmevent_thr_started, fpin_thr_started,
+-	fpin_consumer_thr_started;
++static pthread_t check_thr, purge_thr, uevent_thr, uxlsnr_thr, uevq_thr,
++	dmevent_thr, fpin_thr, fpin_consumer_thr;
++static bool check_thr_started, purge_thr_started, uevent_thr_started,
++	uxlsnr_thr_started, uevq_thr_started, dmevent_thr_started,
++	fpin_thr_started, fpin_consumer_thr_started;
+ static int pid_fd = -1;
+ 
+ static inline enum daemon_status get_running_state(void)
+@@ -2377,6 +2378,28 @@ check_path (struct vectors * vecs, struct path * pp, unsigned int ticks)
+ 	if (newstate == PATH_REMOVED)
+ 		newstate = PATH_DOWN;
+ 
++	/*
++	 * PATH_DISCONNECTED is an ephemeral state used to signal that a path
++	 * has been disconnected at the storage target (LUN unmapped). We use
++	 * it to set pp->disconnected for purge tracking, then immediately
++	 * convert it to PATH_DOWN for normal path failure handling.
++	 *
++	 * This ensures PATH_DISCONNECTED never gets stored in pp->state or
++	 * pp->chkrstate - it exists only as a transient signal from the
++	 * checker to trigger special handling before becoming PATH_DOWN.
++	 */
++	if (newstate == PATH_DISCONNECTED) {
++		if (pp->mpp &&
++		    pp->mpp->purge_disconnected == PURGE_DISCONNECTED_ON &&
++		    pp->disconnected == NOT_DISCONNECTED) {
++			condlog(2, "%s: mark (%s) path for purge", pp->dev,
++				checker_state_name(newstate));
++			pp->disconnected = DISCONNECTED_READY_FOR_PURGE;
++		}
++		/* Always convert to PATH_DOWN for normal processing */
++		newstate = PATH_DOWN;
++	}
++
+ 	if (newstate == PATH_WILD || newstate == PATH_UNCHECKED) {
+ 		condlog(2, "%s: unusable path (%s) - checker failed",
+ 			pp->dev, checker_state_name(newstate));
+@@ -2684,6 +2707,7 @@ checkerloop (void *ap)
+ 		struct timespec diff_time, start_time, end_time;
+ 		int num_paths = 0, strict_timing, rc = 0;
+ 		unsigned int ticks = 0;
++		LIST_HEAD(purge_list);
+ 
+ 		get_monotonic_time(&start_time);
+ 		if (start_time.tv_sec && last_time.tv_sec) {
+@@ -2724,6 +2748,12 @@ checkerloop (void *ap)
+ 		}
+ 		lock_cleanup_pop(vecs->lock);
+ 
++		/*
++		 * Cleanup handler to free purge_list if thread is cancelled.
++		 * This prevents memory leaks during shutdown.
++		 */
++		pthread_cleanup_push(cleanup_purge_list, &purge_list);
++
+ 		pthread_cleanup_push(cleanup_lock, &vecs->lock);
+ 		lock(&vecs->lock);
+ 		pthread_testcancel();
+@@ -2731,6 +2761,11 @@ checkerloop (void *ap)
+ 		retry_count_tick(vecs->mpvec);
+ 		missing_uev_wait_tick(vecs);
+ 		ghost_delay_tick(vecs);
++		/*
++		 * Build purge list for disconnected paths.
++		 * The caller will queue it after releasing vecs->lock.
++		 */
++		build_purge_list(vecs, &purge_list);
+ 		lock_cleanup_pop(vecs->lock);
+ 
+ 		if (count)
+@@ -2745,6 +2780,26 @@ checkerloop (void *ap)
+ 			lock_cleanup_pop(vecs->lock);
+ 		}
+ 
++		/*
++		 * Queue purge work for disconnected paths.
++		 * This is done after releasing vecs->lock to avoid holding
++		 * the lock while signaling the purge thread.
++		 */
++		if (!list_empty(&purge_list)) {
++			pthread_cleanup_push(cleanup_mutex, &purge_mutex);
++			pthread_mutex_lock(&purge_mutex);
++			pthread_testcancel();
++			list_splice_tail_init(&purge_list, &purge_queue);
++			pthread_cond_signal(&purge_cond);
++			pthread_cleanup_pop(1);
++		}
++
++		/*
++		 * Pop cleanup handler. Execute it (arg=1) to free purge_list
++		 * at the end of each iteration.
++		 */
++		pthread_cleanup_pop(1);
++
+ 		diff_time.tv_nsec = 0;
+ 		if (start_time.tv_sec) {
+ 			get_monotonic_time(&end_time);
+@@ -3225,6 +3280,8 @@ static void cleanup_threads(void)
+ 
+ 	if (check_thr_started)
+ 		pthread_cancel(check_thr);
++	if (purge_thr_started)
++		pthread_cancel(purge_thr);
+ 	if (uevent_thr_started)
+ 		pthread_cancel(uevent_thr);
+ 	if (uxlsnr_thr_started)
+@@ -3241,6 +3298,8 @@ static void cleanup_threads(void)
+ 
+ 	if (check_thr_started)
+ 		pthread_join(check_thr, NULL);
++	if (purge_thr_started)
++		pthread_join(purge_thr, NULL);
+ 	if (uevent_thr_started)
+ 		pthread_join(uevent_thr, NULL);
+ 	if (uxlsnr_thr_started)
+@@ -3496,6 +3555,11 @@ child (__attribute__((unused)) void *param)
+ 		goto failed;
+ 	} else
+ 		check_thr_started = true;
++	if ((rc = pthread_create(&purge_thr, &misc_attr, purgeloop, vecs))) {
++		condlog(0, "failed to create purge loop thread: %d", rc);
++		goto failed;
++	} else
++		purge_thr_started = true;
+ 	if ((rc = pthread_create(&uevq_thr, &misc_attr, uevqloop, vecs))) {
+ 		condlog(0, "failed to create uevent dispatcher: %d", rc);
+ 		goto failed;
+diff --git a/multipathd/purge.c b/multipathd/purge.c
+new file mode 100644
+index 00000000..44f0c905
+--- /dev/null
++++ b/multipathd/purge.c
+@@ -0,0 +1,326 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Copyright (C) 2025 Brian Bunker <brian@purestorage.com>
++ * Copyright (C) 2025 Krishna Kant <krishna.kant@purestorage.com>
++ */
++
++#include <pthread.h>
++#include <sys/mman.h>
++#include <sys/stat.h>
++#include <errno.h>
++#include <string.h>
++#include <unistd.h>
++#include <libudev.h>
++#include <urcu.h>
++
++#include "vector.h"
++#include "structs.h"
++#include "structs_vec.h"
++#include "debug.h"
++#include "util.h"
++#include "lock.h"
++#include "sysfs.h"
++#include "list.h"
++#include "purge.h"
++
++pthread_mutex_t purge_mutex = PTHREAD_MUTEX_INITIALIZER;
++pthread_cond_t purge_cond = PTHREAD_COND_INITIALIZER;
++LIST_HEAD(purge_queue);
++
++/*
++ * Information needed to purge a path. We copy this data while holding
++ * vecs->lock, then release the lock before doing the actual sysfs write.
++ * This prevents blocking other operations while waiting for sysfs I/O.
++ *
++ * The udev device reference captures the sysfs path (including H:C:T:L).
++ * The duplicated fd prevents device name/number reuse: the kernel will not
++ * reuse the device's minor number (which maps to the device name) for a new
++ * device while we hold an open file descriptor, even if the original device
++ * has been removed. This protects against deleting a new device that reused
++ * the same name after the original was removed externally.
++ */
++struct purge_path_info {
++	struct list_head node;	  /* List linkage */
++	struct udev_device *udev; /* Udev device (refcounted) */
++	int fd;			  /* Dup'd fd prevents device reuse */
++};
++
++/*
++ * Attempt to delete a path by writing to the SCSI device's sysfs delete
++ * attribute. This triggers kernel-level device removal. The actual cleanup
++ * of the path structure from pathvec happens later when a uevent arrives
++ * (handled by uev_remove_path).
++ *
++ * This function does NOT require vecs->lock to be held, as it operates on
++ * copied data. This function may block while writing to sysfs, which is
++ * why it's called without holding any locks.
++ *
++ * Protection against device reuse:
++ * The duplicated fd in purge_path_info prevents the kernel from reusing
++ * the device's minor number (and thus the device name like /dev/sdd) for
++ * a new device, even if the original device has been removed externally.
++ * This ensures we cannot accidentally delete a new device that reused the
++ * same name. The kernel maintains this guarantee as long as we hold the
++ * open file descriptor.
++ */
++static void delete_path_sysfs(struct purge_path_info *info)
++{
++	struct udev_device *ud;
++	const char *devname;
++
++	if (!info->udev)
++		goto out;
++
++	devname = udev_device_get_devnode(info->udev);
++
++	/*
++	 * Get the SCSI device parent. This is where we'll write to the
++	 * "delete" attribute to trigger device removal.
++	 */
++	ud = udev_device_get_parent_with_subsystem_devtype(info->udev, "scsi",
++							   "scsi_device");
++	if (!ud) {
++		condlog(3, "%s: failed to purge, no SCSI parent found", devname);
++		goto out;
++	}
++
++	/*
++	 * Write "1" to the SCSI device's delete attribute to trigger
++	 * kernel-level device removal.
++	 */
++	if (sysfs_attr_set_value(ud, "delete", "1", 1) < 0)
++		condlog(3, "%s: failed to purge", devname);
++	else
++		condlog(2, "%s: purged", devname);
++
++out:
++	return;
++}
++
++/*
++ * Prepare purge info for a path while holding vecs->lock.
++ * Takes a reference on the udev device and duplicates the fd.
++ * Returns allocated purge_path_info on success, NULL on failure.
++ *
++ * We require a valid fd because it prevents the kernel from reusing
++ * the device's minor number (and device name) for a new device while
++ * we hold it open. This protects against accidentally deleting a new
++ * device that reused the same name after the original was removed.
++ */
++static struct purge_path_info *prepare_purge_path_info(struct path *pp)
++{
++	struct purge_path_info *info = NULL;
++
++	if (!pp->udev || !pp->mpp)
++		goto out;
++
++	/*
++	 * We require a valid fd to prevent device name reuse.
++	 * Without it, we cannot safely purge the device.
++	 */
++	if (pp->fd < 0) {
++		condlog(3, "%s: no fd available, cannot safely purge", pp->dev);
++		goto out;
++	}
++
++	info = calloc(1, sizeof(*info));
++	if (!info)
++		goto out;
++
++	INIT_LIST_HEAD(&info->node);
++	info->udev = udev_device_ref(pp->udev);
++	if (!info->udev)
++		goto out_free;
++
++	info->fd = dup(pp->fd);
++	if (info->fd < 0) {
++		condlog(3, "%s: failed to dup fd: %s, cannot safely purge",
++			pp->dev, strerror(errno));
++		goto out_unref;
++	}
++
++	return info;
++
++out_unref:
++	udev_device_unref(info->udev);
++out_free:
++	free(info);
++	info = NULL;
++out:
++	return info;
++}
++
++/*
++ * Clean up and free purge info.
++ */
++static void free_purge_path_info(struct purge_path_info *info)
++{
++	if (!info)
++		return;
++
++	if (info->fd >= 0)
++		close(info->fd);
++	if (info->udev)
++		udev_device_unref(info->udev);
++	free(info);
++}
++
++/*
++ * Build a list of purge_path_info for all paths marked for purge.
++ * This should be called while holding vecs->lock. It clears the
++ * disconnected flag and prepares purge info for each path, adding
++ * them to tmpq.
++ */
++void build_purge_list(struct vectors *vecs, struct list_head *tmpq)
++{
++	struct path *pp;
++	unsigned int i;
++
++	vector_foreach_slot (vecs->pathvec, pp, i) {
++		struct purge_path_info *info;
++
++		if (pp->disconnected != DISCONNECTED_READY_FOR_PURGE)
++			continue;
++
++		/*
++		 * Mark as queued whether we succeed or fail.
++		 * On success, we're purging it now.
++		 * On failure, retrying is unlikely to help until
++		 * the checker re-evaluates the path.
++		 */
++		pp->disconnected = DISCONNECTED_QUEUED_FOR_PURGE;
++
++		info = prepare_purge_path_info(pp);
++		if (info) {
++			condlog(2, "%s: queuing path for purge", pp->dev);
++			list_add_tail(&info->node, tmpq);
++		} else
++			condlog(3, "%s: failed to prepare purge info", pp->dev);
++	}
++}
++
++static void rcu_unregister(__attribute__((unused)) void *param)
++{
++	rcu_unregister_thread();
++}
++
++/*
++ * Cleanup handler for a single purge_path_info.
++ * Used to prevent memory leaks if thread is cancelled while processing.
++ */
++static void cleanup_purge_path_info(void *arg)
++{
++	struct purge_path_info *info = arg;
++
++	free_purge_path_info(info);
++}
++
++/*
++ * Cleanup handler for purge list. Frees all purge_path_info entries.
++ * Can be called as a pthread cleanup handler or directly.
++ */
++void cleanup_purge_list(void *arg)
++{
++	struct list_head *purge_list = arg;
++	struct purge_path_info *info, *tmp;
++
++	list_for_each_entry_safe(info, tmp, purge_list, node)
++	{
++		list_del_init(&info->node);
++		free_purge_path_info(info);
++	}
++}
++
++/*
++ * Cleanup handler for the global purge queue.
++ * Used during shutdown to free any remaining queued items.
++ */
++static void cleanup_global_purge_queue(void *arg __attribute__((unused)))
++{
++	pthread_mutex_lock(&purge_mutex);
++	cleanup_purge_list(&purge_queue);
++	pthread_mutex_unlock(&purge_mutex);
++}
++
++/*
++ * Main purge thread loop.
++ *
++ * This thread waits for purge_path_info structs to be queued by the checker
++ * thread, then processes them by writing to their sysfs delete attributes.
++ * The checker thread builds the list while holding vecs->lock, so this
++ * thread doesn't need to grab that lock at all.
++ *
++ * Uses list_splice_tail_init() like uevent_dispatch() to safely transfer
++ * items from the global queue to a local list for processing.
++ *
++ * Cleanup handlers are registered for both the local purge_list and the
++ * global purge_queue (similar to uevent_listen), and for each individual
++ * purge_path_info after it's popped off the list (similar to service_uevq).
++ * This ensures no memory leaks if the thread is cancelled at any point.
++ */
++void *purgeloop(void *ap __attribute__((unused)))
++{
++	pthread_cleanup_push(rcu_unregister, NULL);
++	rcu_register_thread();
++	mlockall(MCL_CURRENT | MCL_FUTURE);
++
++	/*
++	 * Cleanup handler for global purge_queue.
++	 * This handles items that were queued but not yet moved to purge_list.
++	 */
++	pthread_cleanup_push(cleanup_global_purge_queue, NULL);
++
++	while (1) {
++		LIST_HEAD(purge_list);
++		struct purge_path_info *info;
++
++		/*
++		 * Cleanup handler for local purge_list.
++		 * This handles items that were moved from purge_queue but
++		 * not yet processed.
++		 */
++		pthread_cleanup_push(cleanup_purge_list, &purge_list);
++
++		/*
++		 * Cleanup handler for purge_mutex.
++		 * Note: pthread_cond_wait() reacquires the mutex before
++		 * returning, even on cancellation, so this cleanup handler
++		 * will properly unlock it if we're cancelled.
++		 */
++		pthread_cleanup_push(cleanup_mutex, &purge_mutex);
++		pthread_mutex_lock(&purge_mutex);
++		pthread_testcancel();
++		while (list_empty(&purge_queue)) {
++			condlog(4, "purgeloop waiting for work");
++			pthread_cond_wait(&purge_cond, &purge_mutex);
++		}
++		list_splice_tail_init(&purge_queue, &purge_list);
++		pthread_cleanup_pop(1);
++
++		/*
++		 * Process all paths in the list without holding any locks.
++		 * The sysfs operations may block, but that's fine since we're
++		 * not holding vecs->lock.
++		 *
++		 * After popping each info off the list, we immediately push
++		 * a cleanup handler for it. This ensures it gets freed even
++		 * if we're cancelled inside delete_path_sysfs().
++		 */
++		while ((info = list_pop_entry(&purge_list, typeof(*info), node))) {
++			pthread_cleanup_push(cleanup_purge_path_info, info);
++			delete_path_sysfs(info);
++			pthread_cleanup_pop(1);
++		}
++
++		/*
++		 * Pop cleanup handler without executing it (0) since we've
++		 * already freed everything above. The handler only runs if
++		 * the thread is cancelled during processing.
++		 */
++		pthread_cleanup_pop(0);
++	}
++
++	pthread_cleanup_pop(1);
++	pthread_cleanup_pop(1);
++	return NULL;
++}
+diff --git a/multipathd/purge.h b/multipathd/purge.h
+new file mode 100644
+index 00000000..1fe755f3
+--- /dev/null
++++ b/multipathd/purge.h
+@@ -0,0 +1,41 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Copyright (C) 2025 Brian Bunker <brian@purestorage.com>
++ * Copyright (C) 2025 Krishna Kant <krishna.kant@purestorage.com>
++ */
++
++#ifndef PURGE_H_INCLUDED
++#define PURGE_H_INCLUDED
++
++#include <pthread.h>
++#include "list.h"
++
++struct vectors;
++
++/*
++ * Purge thread synchronization.
++ * The checker thread builds a list of paths to purge and queues them here.
++ * The purge thread picks up the queue and processes it.
++ */
++extern pthread_mutex_t purge_mutex;
++extern pthread_cond_t purge_cond;
++extern struct list_head purge_queue;
++
++/*
++ * Build a list of paths to purge and add them to tmpq. Called by checker
++ * thread while holding vecs->lock.
++ */
++void build_purge_list(struct vectors *vecs, struct list_head *tmpq);
++
++/*
++ * Cleanup handler for purge list. Frees all purge_path_info entries.
++ * Can be called as a pthread cleanup handler or directly for shutdown cleanup.
++ */
++void cleanup_purge_list(void *arg);
++
++/*
++ * Main purge thread loop
++ */
++void *purgeloop(void *ap);
++
++#endif /* PURGE_H_INCLUDED */

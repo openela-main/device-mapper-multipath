@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Wilck <mwilck@suse.com>
+Date: Fri, 5 Jan 2024 18:51:02 +0100
+Subject: [PATCH] libmultipath: is_uevent_busy(): check servicing_uev under
+ lock
+
+This fixes a coverity-reported defect (413384 Data race condition).
+Indeed, we always set servicing_uev with the lock held, so it makes
+sense to read it with the lock held, too.
+
+Signed-off-by: Martin Wilck <mwilck@suse.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/uevent.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/libmultipath/uevent.c b/libmultipath/uevent.c
+index 4ef7181c..8cd928a9 100644
+--- a/libmultipath/uevent.c
++++ b/libmultipath/uevent.c
+@@ -73,12 +73,13 @@ struct uevent_filter_state {
+ 
+ int is_uevent_busy(void)
+ {
+-	int empty;
++	int empty, servicing;
+ 
+ 	pthread_mutex_lock(uevq_lockp);
+ 	empty = list_empty(&uevq);
++	servicing = servicing_uev;
+ 	pthread_mutex_unlock(uevq_lockp);
+-	return (!empty || servicing_uev);
++	return (!empty || servicing);
+ }
+ 
+ struct uevent * alloc_uevent (void)

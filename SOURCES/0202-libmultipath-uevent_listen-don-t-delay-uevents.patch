@@ -1,0 +1,204 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Wilck <mwilck@suse.com>
+Date: Tue, 29 Mar 2022 23:25:48 +0200
+Subject: [PATCH] libmultipath: uevent_listen(): don't delay uevents
+
+When multipathd starts up early, basically all devices are added
+through uevent processing. This takes much more time than necessary
+because of the artificial delays introduced for passing uevents
+between the listener and the receiver thread in ee8888f
+("multipath-tools: improve processing efficiency for addition and deletion of
+multipath devices"). This delay could be up to 30s.
+
+It's generally not a good idea to delay uevent processing in multipathd.
+ADD events must normally be handled ASAP in order to avoid maps entering
+queueing mode or eventually failing. Handling REMOVE events quickly is
+also important to make multipathd aware of deleted devices and keep
+kernel and multipathd state in sync.
+
+If uevents arrive quickly, the assumption is that the dispatcher will process
+them more slowly than the listener. This was the idea of commit ee8888f,
+AFAIU: if a queue of unprocessed events piles up because the dispatcher is
+too slow, use filtering and merging to reduce the length of the queue, and
+thus the work to be done for the uevent dispatcher, especially the work
+that needs to be done while holding the vecs lock. In ee8888f, the
+queue was created by allowing uevents to accumulate in the listener.
+
+This patch changes the logic of ee8888f, while keeping the uevent
+filtering and discarding features. The idea is that the uevent dispatcher
+shouldn't be idle if there are uevents to process. Therefore uevents
+are passed to it immediately. But it now checks for new uevents after
+processing every individual event, before processing the entire queue,
+and it applies filtering and merging to the queue as it grows.
+
+This patch set avoids any delay when the uevent dispatcher is idle or
+able to keep up with the rate of incoming uevents, while applying an
+increasing amount of filtering and merging as pressure on the uevent
+dispatcher increases. It's reasonable to assume that filtering and
+merging get more efficient with increasing queue length, because the
+probability of finding matching events will increase.
+
+Signed-off-by: Martin Wilck <mwilck@suse.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/uevent.c | 108 +++++++++++++++---------------------------
+ 1 file changed, 37 insertions(+), 71 deletions(-)
+
+diff --git a/libmultipath/uevent.c b/libmultipath/uevent.c
+index 2198e254..c3984fef 100644
+--- a/libmultipath/uevent.c
++++ b/libmultipath/uevent.c
+@@ -54,10 +54,6 @@
+ #include "blacklist.h"
+ #include "devmapper.h"
+ 
+-#define MAX_ACCUMULATION_COUNT 2048
+-#define MAX_ACCUMULATION_TIME 30*1000
+-#define MIN_BURST_SPEED 10
+-
+ typedef int (uev_trigger)(struct uevent *, void * trigger_data);
+ 
+ static LIST_HEAD(uevq);
+@@ -586,44 +582,43 @@ static struct uevent *uevent_from_udev_device(struct udev_device *dev)
+ 	return uev;
+ }
+ 
+-static bool uevent_burst(struct timeval *start_time, int events)
++#define MAX_UEVENTS 1000
++static int uevent_receive_events(int fd, struct list_head *tmpq,
++				 struct udev_monitor *monitor)
+ {
+-	struct timeval diff_time, end_time;
+-	unsigned long speed;
+-	unsigned long eclipse_ms;
+-
+-	if(events > MAX_ACCUMULATION_COUNT) {
+-		condlog(2, "burst got %u uevents, too much uevents, stopped", events);
+-		return false;
+-	}
++	struct pollfd ev_poll;
++	int n = 0;
+ 
+-	gettimeofday(&end_time, NULL);
+-	timersub(&end_time, start_time, &diff_time);
++	do {
++		struct uevent *uev;
++		struct udev_device *dev;
+ 
+-	eclipse_ms = diff_time.tv_sec * 1000 + diff_time.tv_usec / 1000;
++		dev = udev_monitor_receive_device(monitor);
++		if (!dev) {
++			condlog(0, "failed getting udev device");
++			break;
++		}
++		uev = uevent_from_udev_device(dev);
++		if (!uev)
++			break;
+ 
+-	if (eclipse_ms == 0)
+-		return true;
++		list_add_tail(&uev->node, tmpq);
++		n++;
++		condlog(4, "received uevent \"%s %s\"", uev->action, uev->kernel);
+ 
+-	if (eclipse_ms > MAX_ACCUMULATION_TIME) {
+-		condlog(2, "burst continued %lu ms, too long time, stopped", eclipse_ms);
+-		return false;
+-	}
++		ev_poll.fd = fd;
++		ev_poll.events = POLLIN;
+ 
+-	speed = (events * 1000) / eclipse_ms;
+-	if (speed > MIN_BURST_SPEED)
+-		return true;
++	} while (n < MAX_UEVENTS && poll(&ev_poll, 1, 0) > 0);
+ 
+-	return false;
++	return n;
+ }
+ 
+ int uevent_listen(struct udev *udev)
+ {
+ 	int err = 2;
+ 	struct udev_monitor *monitor = NULL;
+-	int fd, socket_flags, events;
+-	struct timeval start_time;
+-	int timeout = 30;
++	int fd, socket_flags;
+ 	LIST_HEAD(uevlisten_tmp);
+ 
+ 	/*
+@@ -675,59 +670,30 @@ int uevent_listen(struct udev *udev)
+ 		goto out;
+ 	}
+ 
+-	events = 0;
+-	gettimeofday(&start_time, NULL);
+ 	pthread_cleanup_push(cleanup_global_uevq, NULL);
+ 	pthread_cleanup_push(cleanup_uevq, &uevlisten_tmp);
+ 	while (1) {
+-		struct uevent *uev;
+-		struct udev_device *dev;
+-		struct pollfd ev_poll;
+-		int poll_timeout;
+-		int fdcount;
++		int fdcount, events;
++		struct pollfd ev_poll = { .fd = fd, .events = POLLIN, };
+ 
+-		memset(&ev_poll, 0, sizeof(struct pollfd));
+-		ev_poll.fd = fd;
+-		ev_poll.events = POLLIN;
+-		poll_timeout = timeout * 1000;
+-		errno = 0;
+-		fdcount = poll(&ev_poll, 1, poll_timeout);
+-		if (fdcount > 0 && ev_poll.revents & POLLIN) {
+-			timeout = uevent_burst(&start_time, events + 1) ? 1 : 0;
+-			dev = udev_monitor_receive_device(monitor);
+-			if (!dev) {
+-				condlog(0, "failed getting udev device");
+-				continue;
+-			}
+-			uev = uevent_from_udev_device(dev);
+-			if (!uev)
+-				continue;
+-			list_add_tail(&uev->node, &uevlisten_tmp);
+-			events++;
+-			continue;
+-		}
++		fdcount = poll(&ev_poll, 1, -1);
+ 		if (fdcount < 0) {
+ 			if (errno == EINTR)
+ 				continue;
+ 
+-			condlog(0, "error receiving "
+-				"uevent message: %m");
++			condlog(0, "error receiving uevent message: %m");
+ 			err = -errno;
+ 			break;
+ 		}
+-		if (!list_empty(&uevlisten_tmp)) {
+-			/*
+-			 * Queue uevents and poke service pthread.
+-			 */
+-			condlog(3, "Forwarding %d uevents", events);
+-			pthread_mutex_lock(uevq_lockp);
+-			list_splice_tail_init(&uevlisten_tmp, &uevq);
+-			pthread_cond_signal(uev_condp);
+-			pthread_mutex_unlock(uevq_lockp);
+-			events = 0;
+-		}
+-		gettimeofday(&start_time, NULL);
+-		timeout = 30;
++		events = uevent_receive_events(fd, &uevlisten_tmp, monitor);
++		if (events <= 0)
++			continue;
++
++		condlog(4, "Forwarding %d uevents", events);
++		pthread_mutex_lock(uevq_lockp);
++		list_splice_tail_init(&uevlisten_tmp, &uevq);
++		pthread_cond_signal(uev_condp);
++		pthread_mutex_unlock(uevq_lockp);
+ 	}
+ 	pthread_cleanup_pop(1);
+ 	pthread_cleanup_pop(1);

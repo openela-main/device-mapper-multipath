@@ -1,6 +1,6 @@
 Name:    device-mapper-multipath
 Version: 0.8.7
-Release: 39%{?dist}.1
+Release: 45%{?dist}
 Summary: Tools to manage multipath devices using device-mapper
 License: GPLv2
 URL:     http://christophe.varoqui.free.fr/
@@ -206,7 +206,20 @@ Patch0193: 0193-libmpathpersist-Fix-race-between-restoring-a-path-an.patch
 Patch0194: 0194-multipathd-Fix-tracking-of-old-PR-key.patch
 Patch0195: 0195-multipathd-Fix-race-while-registering-PR-key.patch
 Patch0196: 0196-mpathpersist-Fix-REPORT-CAPABILITIES-output.patch
-
+Patch0197: 0197-multipath-tools-update-NFINIDAT-InfiniBox-config-in-.patch
+Patch0198: 0198-multipathd-print-path-offline-message-even-without-a.patch
+Patch0199: 0199-libmultipath-improve-cleanup-of-uevent-queues-on-exi.patch
+Patch0200: 0200-uevent_dispatch-use-while-in-wait-loop.patch
+Patch0201: 0201-libmultipath-uevent_dispatch-process-uevents-one-by-.patch
+Patch0202: 0202-libmultipath-uevent_listen-don-t-delay-uevents.patch
+Patch0203: 0203-libmultipath-uevent-use-struct-to-pass-parameters-ar.patch
+Patch0204: 0204-libmultipath-is_uevent_busy-check-servicing_uev-unde.patch
+Patch0205: 0205-multipathd-make-multipathd-show-status-busy-checker-.patch
+Patch0206: 0206-libmultipath-add-purge_disconnected-configuration-op.patch
+Patch0207: 0207-multipathd-implement-purge-functionality-for-disconn.patch
+Patch0208: 0208-libmpathpersist-fix-register-retry-status-checking.patch
+Patch0209: 0209-multipathd-remember-number-of-registered-keys-when-i.patch
+Patch0210: 0210-libmpathpersist-fix-code-for-skipping-multipathd-pat.patch
 
 # runtime
 Requires: %{name}-libs = %{version}-%{release}
@@ -409,7 +422,51 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
-* Tue Nov 11 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-39.1
+* Thu Feb 19 2026 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-45
+- Add 0208-libmpathpersist-fix-register-retry-status-checking.patch
+- Add 0209-multipathd-remember-number-of-registered-keys-when-i.patch
+- Add 0210-libmpathpersist-fix-code-for-skipping-multipathd-pat.patch
+  * Fixes RHEL-148462 ("Improve multipathd's handling of updating
+    persistent reservations on restored paths. [rhel-9]")
+- Resolves: RHEL-148462
+
+* Thu Jan 29 2026 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-44
+- Add 0206-libmultipath-add-purge_disconnected-configuration-op.patch
+- Add 0207-multipathd-implement-purge-functionality-for-disconn.patch
+  * Fixes RHEL-141291 ("Add purge_disconnected support to multipathd
+    [rhel-9]")
+- Resolves: RHEL-141291
+
+* Thu Jan 22 2026 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-43
+- Add 0198-multipathd-print-path-offline-message-even-without-a.patch
+  * Fixes RHEL-133814 ("log_checker_err is not printing messages
+    repeatedly for failed path [rhel-9]")
+- Add 0199-libmultipath-improve-cleanup-of-uevent-queues-on-exi.patch
+- Add 0200-uevent_dispatch-use-while-in-wait-loop.patch
+- Add 0201-libmultipath-uevent_dispatch-process-uevents-one-by-.patch
+- Add 0202-libmultipath-uevent_listen-don-t-delay-uevents.patch
+- Add 0203-libmultipath-uevent-use-struct-to-pass-parameters-ar.patch
+- Add 0204-libmultipath-is_uevent_busy-check-servicing_uev-unde.patch
+- Add 0205-multipathd-make-multipathd-show-status-busy-checker-.patch
+  * Fixes RHEL-135904 (VM reboot in RHOSP environment fails with error
+    "Could not open '/dev/dm-95': No such file or directory")
+- Resolves: RHEL-133814
+- Resolves: RHEL-135904
+
+* Wed Nov 19 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-42
+- Add 0197-multipath-tools-update-NFINIDAT-InfiniBox-config-in-.patch
+  * Fixes RHEL-128396 ("Update the multipath.conf stanza for Infinidat
+    storage [rhel-9]")
+- Resolves: RHEL-128396
+
+* Tue Nov 11 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-41
+- Add 0195-multipathd-Fix-race-while-registering-PR-key.patch
+- Add 0196-mpathpersist-Fix-REPORT-CAPABILITIES-output.patch
+  * Fixes RHEL-118515 ("There are many bugs in multipath's persistent
+    reservation handling")
+- Resolves: RHEL-118515
+
+* Wed Oct  1 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-40
 - Add 0150-libmpathpersist-retry-commands-on-other-paths-in-mpa.patch
 - Add 0151-libmpathpersist-check-released-key-against-the-reser.patch
 - Add 0152-multipathd-remove-thread-from-mpath_pr_event_handle.patch
@@ -455,11 +512,9 @@ fi
 - Add 0192-libmpathpersist-Fix-unregistering-while-holding-the-.patch
 - Add 0193-libmpathpersist-Fix-race-between-restoring-a-path-an.patch
 - Add 0194-multipathd-Fix-tracking-of-old-PR-key.patch
-- Add 0195-multipathd-Fix-race-while-registering-PR-key.patch
-- Add 0196-mpathpersist-Fix-REPORT-CAPABILITIES-output.patch
-  * Fixes RHEL-118723 ("There are many bugs in multipath's persistent
-    reservation handling [rhel-9.7.z]")
-- Resolves: RHEL-118723
+  * Fixes RHEL-118515 ("There are many bugs in multipath's persistent
+    reservation handling")
+- Resolves: RHEL-118515
 
 * Mon Jul 14 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-39
 - Add 0145-multipath-tools-add-DellEMC-ME4-PowerVault-ME4-to-ha.patch

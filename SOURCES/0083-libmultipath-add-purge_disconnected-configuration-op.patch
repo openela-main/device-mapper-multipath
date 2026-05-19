@@ -1,0 +1,279 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brian Bunker <brian@purestorage.com>
+Date: Fri, 9 Jan 2026 16:50:43 -0800
+Subject: [PATCH] libmultipath: add purge_disconnected configuration option
+
+Add a new configuration option 'purge_disconnected' that can be set
+per multipath device, hardware entry, or globally. This option will
+be used to control whether multipathd should automatically remove
+paths that are in a disconnected state.
+
+The option is disabled by default (PURGE_DISCONNECTED_OFF).
+
+This patch only adds the configuration infrastructure. The actual
+purge functionality will be implemented in a subsequent patch.
+
+Signed-off-by: Brian Bunker <brian@purestorage.com>
+Reviewed-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+---
+ libmultipath/config.c         |  2 ++
+ libmultipath/config.h         |  3 +++
+ libmultipath/configure.c      |  1 +
+ libmultipath/defaults.h       |  1 +
+ libmultipath/dict.c           | 14 ++++++++++++++
+ libmultipath/propsel.c        | 16 ++++++++++++++++
+ libmultipath/propsel.h        |  1 +
+ libmultipath/structs.h        | 12 ++++++++++++
+ multipath/multipath.conf.5.in | 22 ++++++++++++++++++++++
+ 9 files changed, 72 insertions(+)
+
+diff --git a/libmultipath/config.c b/libmultipath/config.c
+index 3d5943d3..5c87fbe0 100644
+--- a/libmultipath/config.c
++++ b/libmultipath/config.c
+@@ -470,6 +470,7 @@ merge_hwe (struct hwentry * dst, struct hwentry * src)
+ 	merge_num(marginal_path_err_rate_threshold);
+ 	merge_num(marginal_path_err_recheck_gap_time);
+ 	merge_num(marginal_path_double_failed_time);
++	merge_num(purge_disconnected);
+ 
+ 	snprintf(id, sizeof(id), "%s/%s", dst->vendor, dst->product);
+ 	reconcile_features_with_options(id, &dst->features,
+@@ -517,6 +518,7 @@ merge_mpe(struct mpentry *dst, struct mpentry *src)
+ 	merge_num(skip_kpartx);
+ 	merge_num(max_sectors_kb);
+ 	merge_num(ghost_delay);
++	merge_num(purge_disconnected);
+ 	merge_num(uid);
+ 	merge_num(gid);
+ 	merge_num(mode);
+diff --git a/libmultipath/config.h b/libmultipath/config.h
+index 158cebf0..c9e4029e 100644
+--- a/libmultipath/config.h
++++ b/libmultipath/config.h
+@@ -89,6 +89,7 @@ struct hwentry {
+ 	int marginal_path_err_rate_threshold;
+ 	int marginal_path_err_recheck_gap_time;
+ 	int marginal_path_double_failed_time;
++	int purge_disconnected;
+ 	int skip_kpartx;
+ 	int max_sectors_kb;
+ 	int ghost_delay;
+@@ -131,6 +132,7 @@ struct mpentry {
+ 	int marginal_path_err_rate_threshold;
+ 	int marginal_path_err_recheck_gap_time;
+ 	int marginal_path_double_failed_time;
++	int purge_disconnected;
+ 	int skip_kpartx;
+ 	int max_sectors_kb;
+ 	int ghost_delay;
+@@ -189,6 +191,7 @@ struct config {
+ 	int marginal_path_err_rate_threshold;
+ 	int marginal_path_err_recheck_gap_time;
+ 	int marginal_path_double_failed_time;
++	int purge_disconnected;
+ 	int uxsock_timeout;
+ 	int strict_timing;
+ 	int retrigger_tries;
+diff --git a/libmultipath/configure.c b/libmultipath/configure.c
+index b5c701fa..e92c905a 100644
+--- a/libmultipath/configure.c
++++ b/libmultipath/configure.c
+@@ -355,6 +355,7 @@ int setup_map(struct multipath *mpp, char **params, struct vectors *vecs)
+ 	select_max_sectors_kb(conf, mpp);
+ 	select_ghost_delay(conf, mpp);
+ 	select_flush_on_last_del(conf, mpp);
++	select_purge_disconnected(conf, mpp);
+ 
+ 	sysfs_set_scsi_tmo(conf, mpp);
+ 	marginal_pathgroups = conf->marginal_pathgroups;
+diff --git a/libmultipath/defaults.h b/libmultipath/defaults.h
+index 3602636c..ed31e475 100644
+--- a/libmultipath/defaults.h
++++ b/libmultipath/defaults.h
+@@ -57,6 +57,7 @@
+ #define DEFAULT_ALL_TG_PT ALL_TG_PT_OFF
+ #define DEFAULT_RECHECK_WWID RECHECK_WWID_OFF
+ #define DEFAULT_AUTO_RESIZE AUTO_RESIZE_NEVER
++#define DEFAULT_PURGE_DISCONNECTED PURGE_DISCONNECTED_OFF
+ /* Enable no foreign libraries by default */
+ #define DEFAULT_ENABLE_FOREIGN "NONE"
+ 
+diff --git a/libmultipath/dict.c b/libmultipath/dict.c
+index 546103f2..968163d7 100644
+--- a/libmultipath/dict.c
++++ b/libmultipath/dict.c
+@@ -941,6 +941,16 @@ declare_hw_snprint(skip_kpartx, print_yes_no_undef)
+ declare_mp_handler(skip_kpartx, set_yes_no_undef)
+ declare_mp_snprint(skip_kpartx, print_yes_no_undef)
+ 
++declare_def_handler(purge_disconnected, set_yes_no_undef)
++declare_def_snprint_defint(purge_disconnected, print_yes_no_undef,
++	DEFAULT_PURGE_DISCONNECTED)
++declare_ovr_handler(purge_disconnected, set_yes_no_undef)
++declare_ovr_snprint(purge_disconnected, print_yes_no_undef)
++declare_hw_handler(purge_disconnected, set_yes_no_undef)
++declare_hw_snprint(purge_disconnected, print_yes_no_undef)
++declare_mp_handler(purge_disconnected, set_yes_no_undef)
++declare_mp_snprint(purge_disconnected, print_yes_no_undef)
++
+ declare_def_range_handler(remove_retries, 0, INT_MAX)
+ declare_def_snprint(remove_retries, print_int)
+ 
+@@ -2227,6 +2237,7 @@ init_keywords(vector keywords)
+ 	install_keyword("retrigger_delay", &def_retrigger_delay_handler, &snprint_def_retrigger_delay);
+ 	install_keyword("missing_uev_wait_timeout", &def_uev_wait_timeout_handler, &snprint_def_uev_wait_timeout);
+ 	install_keyword("skip_kpartx", &def_skip_kpartx_handler, &snprint_def_skip_kpartx);
++	install_keyword("purge_disconnected", &def_purge_disconnected_handler, &snprint_def_purge_disconnected);
+ 	install_keyword("disable_changed_wwids", &deprecated_disable_changed_wwids_handler, &snprint_deprecated);
+ 	install_keyword("remove_retries", &def_remove_retries_handler, &snprint_def_remove_retries);
+ 	install_keyword("max_sectors_kb", &def_max_sectors_kb_handler, &snprint_def_max_sectors_kb);
+@@ -2310,6 +2321,7 @@ init_keywords(vector keywords)
+ 	install_keyword("marginal_path_err_recheck_gap_time", &hw_marginal_path_err_recheck_gap_time_handler, &snprint_hw_marginal_path_err_recheck_gap_time);
+ 	install_keyword("marginal_path_double_failed_time", &hw_marginal_path_double_failed_time_handler, &snprint_hw_marginal_path_double_failed_time);
+ 	install_keyword("skip_kpartx", &hw_skip_kpartx_handler, &snprint_hw_skip_kpartx);
++	install_keyword("purge_disconnected", &hw_purge_disconnected_handler, &snprint_hw_purge_disconnected);
+ 	install_keyword("max_sectors_kb", &hw_max_sectors_kb_handler, &snprint_hw_max_sectors_kb);
+ 	install_keyword("ghost_delay", &hw_ghost_delay_handler, &snprint_hw_ghost_delay);
+ 	install_keyword("all_tg_pt", &hw_all_tg_pt_handler, &snprint_hw_all_tg_pt);
+@@ -2355,6 +2367,7 @@ init_keywords(vector keywords)
+ 	install_keyword("marginal_path_double_failed_time", &ovr_marginal_path_double_failed_time_handler, &snprint_ovr_marginal_path_double_failed_time);
+ 
+ 	install_keyword("skip_kpartx", &ovr_skip_kpartx_handler, &snprint_ovr_skip_kpartx);
++	install_keyword("purge_disconnected", &ovr_purge_disconnected_handler, &snprint_ovr_purge_disconnected);
+ 	install_keyword("max_sectors_kb", &ovr_max_sectors_kb_handler, &snprint_ovr_max_sectors_kb);
+ 	install_keyword("ghost_delay", &ovr_ghost_delay_handler, &snprint_ovr_ghost_delay);
+ 	install_keyword("all_tg_pt", &ovr_all_tg_pt_handler, &snprint_ovr_all_tg_pt);
+@@ -2400,6 +2413,7 @@ init_keywords(vector keywords)
+ 	install_keyword("marginal_path_err_recheck_gap_time", &mp_marginal_path_err_recheck_gap_time_handler, &snprint_mp_marginal_path_err_recheck_gap_time);
+ 	install_keyword("marginal_path_double_failed_time", &mp_marginal_path_double_failed_time_handler, &snprint_mp_marginal_path_double_failed_time);
+ 	install_keyword("skip_kpartx", &mp_skip_kpartx_handler, &snprint_mp_skip_kpartx);
++	install_keyword("purge_disconnected", &mp_purge_disconnected_handler, &snprint_mp_purge_disconnected);
+ 	install_keyword("max_sectors_kb", &mp_max_sectors_kb_handler, &snprint_mp_max_sectors_kb);
+ 	install_keyword("ghost_delay", &mp_ghost_delay_handler, &snprint_mp_ghost_delay);
+ 	install_sublevel_end();
+diff --git a/libmultipath/propsel.c b/libmultipath/propsel.c
+index 5ad0b78c..9b7aba43 100644
+--- a/libmultipath/propsel.c
++++ b/libmultipath/propsel.c
+@@ -1367,6 +1367,22 @@ out:
+ 	return 0;
+ }
+ 
++int select_purge_disconnected(struct config *conf, struct multipath *mp)
++{
++	const char *origin;
++
++	mp_set_mpe(purge_disconnected);
++	mp_set_ovr(purge_disconnected);
++	mp_set_hwe(purge_disconnected);
++	mp_set_conf(purge_disconnected);
++	mp_set_default(purge_disconnected, DEFAULT_PURGE_DISCONNECTED);
++out:
++	condlog(3, "%s: purge_disconnected = %s %s", mp->alias,
++		(mp->purge_disconnected == PURGE_DISCONNECTED_ON) ? "yes" : "no",
++		origin);
++	return 0;
++}
++
+ int select_max_sectors_kb(struct config *conf, struct multipath * mp)
+ {
+ 	const char *origin;
+diff --git a/libmultipath/propsel.h b/libmultipath/propsel.h
+index 73615c2f..ee83253e 100644
+--- a/libmultipath/propsel.h
++++ b/libmultipath/propsel.h
+@@ -37,6 +37,7 @@ int select_marginal_path_err_rate_threshold(struct config *conf, struct multipat
+ int select_marginal_path_err_recheck_gap_time(struct config *conf, struct multipath *mp);
+ int select_marginal_path_double_failed_time(struct config *conf, struct multipath *mp);
+ int select_ghost_delay(struct config *conf, struct multipath * mp);
++int select_purge_disconnected(struct config *conf, struct multipath *mp);
+ void reconcile_features_with_options(const char *id, char **features,
+ 				     int* no_path_retry,
+ 				     int *retain_hwhandler);
+diff --git a/libmultipath/structs.h b/libmultipath/structs.h
+index 2ff195f3..e3f2ffb9 100644
+--- a/libmultipath/structs.h
++++ b/libmultipath/structs.h
+@@ -186,6 +186,17 @@ enum auto_resize_state {
+ 	AUTO_RESIZE_GROW_SHRINK,
+ };
+ 
++/*
++ * purge_disconnected configuration option (per multipath device)
++ * Controls whether paths that become disconnected at the storage target
++ * should be automatically removed from the system via sysfs.
++ */
++enum purge_disconnected_states {
++	PURGE_DISCONNECTED_UNDEF = YNU_UNDEF,
++	PURGE_DISCONNECTED_OFF = YNU_NO, /* Don't purge */
++	PURGE_DISCONNECTED_ON = YNU_YES, /* Purge disconnected paths */
++};
++
+ #define PROTOCOL_UNSET -1
+ 
+ enum scsi_protocol {
+@@ -453,6 +464,7 @@ struct multipath {
+ 	int ghost_delay;
+ 	int ghost_delay_tick;
+ 	int queue_mode;
++	int purge_disconnected;
+ 	uid_t uid;
+ 	gid_t gid;
+ 	mode_t mode;
+diff --git a/multipath/multipath.conf.5.in b/multipath/multipath.conf.5.in
+index 31740a1f..af85092e 100644
+--- a/multipath/multipath.conf.5.in
++++ b/multipath/multipath.conf.5.in
+@@ -1304,6 +1304,22 @@ The default is: \fBno\fR
+ .
+ .
+ .TP
++.B purge_disconnected
++If set to
++.I yes
++, multipathd will automatically remove devices that are in a disconnected state.
++A path is considered disconnected when the TUR (Test Unit Ready) path checker
++receives the SCSI sense code "LOGICAL UNIT NOT SUPPORTED" (sense key 0x5,
++ASC/ASCQ 0x25/0x00). This typically indicates that the LUN has been unmapped
++or is no longer presented by the storage array. This option helps clean up
++stale device entries that would otherwise remain in the system.
++.RS
++.TP
++The default is: \fBno\fR
++.RE
++.
++.
++.TP
+ .B disable_changed_wwids
+ (Deprecated) This option is not supported anymore, and will be ignored.
+ .RE
+@@ -1601,6 +1617,8 @@ section:
+ .TP
+ .B skip_kpartx
+ .TP
++.B purge_disconnected
++.TP
+ .B max_sectors_kb
+ .TP
+ .B ghost_delay
+@@ -1786,6 +1804,8 @@ section:
+ .TP
+ .B skip_kpartx
+ .TP
++.B purge_disconnected
++.TP
+ .B max_sectors_kb
+ .TP
+ .B ghost_delay
+@@ -1870,6 +1890,8 @@ the values are taken from the \fIdevices\fR or \fIdefaults\fR sections:
+ .TP
+ .B skip_kpartx
+ .TP
++.B purge_disconnected
++.TP
+ .B max_sectors_kb
+ .TP
+ .B ghost_delay

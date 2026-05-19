@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Wed, 21 Jan 2026 16:03:13 -0500
+Subject: [PATCH] multipathd: print path offline message even without a checker
+
+If a path has a checker selected and is offline, multipathd will print a
+"path offline" message. However if the checker isn't selected, for
+instance because multipathd was started or reconfigured while the path
+was offline, multipathd was not printing the "path offline" message.
+Fix that.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ multipathd/main.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/multipathd/main.c b/multipathd/main.c
+index 0882ef2a..e9165350 100644
+--- a/multipathd/main.c
++++ b/multipathd/main.c
+@@ -95,12 +95,11 @@ mpath_pr_event_handle(struct path *pp, unsigned int nr_keys_needed,
+ 
+ #define LOG_MSG(lvl, pp)					\
+ do {								\
+-	if (pp->mpp && checker_selected(&pp->checker) &&	\
+-	    lvl <= libmp_verbosity) {					\
++	if (pp->mpp && lvl <= libmp_verbosity) {		\
+ 		if (pp->offline)				\
+ 			condlog(lvl, "%s: %s - path offline",	\
+ 				pp->mpp->alias, pp->dev);	\
+-		else  {						\
++		else if (checker_selected(&pp->checker)) {	\
+ 			const char *__m =			\
+ 				checker_message(&pp->checker);	\
+ 								\

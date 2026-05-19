@@ -1,6 +1,6 @@
 Name:    device-mapper-multipath
 Version: 0.9.9
-Release: 12%{?dist}.1
+Release: 18%{?dist}
 Summary: Tools to manage multipath devices using device-mapper
 License: GPLv2
 URL:     http://christophe.varoqui.free.fr/
@@ -89,6 +89,14 @@ Patch0076: 0076-libmpathpersist-Fix-race-between-restoring-a-path-an.patch
 Patch0077: 0077-multipathd-Fix-tracking-of-old-PR-key.patch
 Patch0078: 0078-multipathd-Fix-race-while-registering-PR-key.patch
 Patch0079: 0079-mpathpersist-Fix-REPORT-CAPABILITIES-output.patch
+Patch0080: 0080-multipath-tools-update-NFINIDAT-InfiniBox-config-in-.patch
+Patch0081: 0081-multipathd-make-multipathd-show-status-busy-checker-.patch
+Patch0082: 0082-multipathd-print-path-offline-message-even-without-a.patch
+Patch0083: 0083-libmultipath-add-purge_disconnected-configuration-op.patch
+Patch0084: 0084-multipathd-implement-purge-functionality-for-disconn.patch
+Patch0085: 0085-libmpathpersist-fix-register-retry-status-checking.patch
+Patch0086: 0086-multipathd-remember-number-of-registered-keys-when-i.patch
+Patch0087: 0087-libmpathpersist-fix-code-for-skipping-multipathd-pat.patch
 
 # runtime
 Requires: %{name}-libs = %{version}-%{release}
@@ -298,7 +306,45 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
-* Tue Nov 11 2025 Lin Li <lilin@redhat.com> - 0.9.9-12.1
+* Thu Feb 19 2026 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-18
+- Add 0085-libmpathpersist-fix-register-retry-status-checking.patch
+- Add 0086-multipathd-remember-number-of-registered-keys-when-i.patch
+- Add 0087-libmpathpersist-fix-code-for-skipping-multipathd-pat.patch
+  * Fixes RHEL-129442 ("Improve multipathd's handling of updating
+    persistent reservations on restored paths.")
+- Resolves: RHEL-129442
+
+* Thu Jan 29 2026 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-17
+- Add 0083-libmultipath-add-purge_disconnected-configuration-op.patch
+- Add 0084-multipathd-implement-purge-functionality-for-disconn.patch
+  * Fixes RHEL-141287 ("Add purge_disconnected support to multipathd")
+- Resolves: RHEL-141287
+
+* Thu Jan 22 2026 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-16
+- Add 0081-multipathd-make-multipathd-show-status-busy-checker-.patch
+  * Fixes RHEL-136405 ("improve Busy checking for multipathd show status
+    output")
+- Add 0082-multipathd-print-path-offline-message-even-without-a.patch
+  * Fixes RHEL-133815 ("log_checker_err is not printing messages
+    repeatedly for failed path [rhel-10]")
+- Resolves: RHEL-133815
+- Resolves: RHEL-136405
+
+
+* Wed Nov 19 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-15
+- Add 0080-multipath-tools-update-NFINIDAT-InfiniBox-config-in-.patch
+  * Fixes RHEL-128338 ("Update the multipath.conf stanza for Infinidat
+    storage")
+- Resolves: RHEL-128338
+
+* Tue Nov 11 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-14
+- Add 0078-multipathd-Fix-race-while-registering-PR-key.patch
+- Add 0079-mpathpersist-Fix-REPORT-CAPABILITIES-output.patch
+  * Fixes RHEL-118720 ("There are many bugs in multipath's persistent
+    reservation handling [rhel-10]")
+- Resolves: RHEL-118720
+
+* Wed Oct  1 2025 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-13
 - Add 0035-libmpathpersist-fix-memory-leak-in-mpath_prout_rel.patch
 - Add 0036-libmpathpersist-retry-commands-on-other-paths-in-mpa.patch
 - Add 0037-libmpathpersist-check-released-key-against-the-reser.patch
@@ -342,11 +388,9 @@ fi
 - Add 0075-libmpathpersist-Fix-unregistering-while-holding-the-.patch
 - Add 0076-libmpathpersist-Fix-race-between-restoring-a-path-an.patch
 - Add 0077-multipathd-Fix-tracking-of-old-PR-key.patch
-- Add 0078-multipathd-Fix-race-while-registering-PR-key.patch
-- Add 0079-mpathpersist-Fix-REPORT-CAPABILITIES-output.patch
-  * Fixes RHEL-125288 ("There are many bugs in multipath's persistent
-    reservation handling [rhel-10.1.z]")
-- Resolves: RHEL-125288
+  * Fixes RHEL-118720 ("There are many bugs in multipath's persistent
+    reservation handling [rhel-10]")
+- Resolves: RHEL-118720
 
 * Sat Sep 13 2025 Lin Li <lilin@redhat.com> - 0.9.9-12
 Add 0034-libmultipath-fix-crash-in-print_foreign_topology.patch

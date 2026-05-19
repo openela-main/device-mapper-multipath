@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 1 Dec 2025 22:02:10 -0500
+Subject: [PATCH] libmpathpersist: fix register retry status checking
+
+If there libmpathpersist failed to create a thread to retry the register
+and ignore command, mpath_prout_reg should fail. Instead, the code was
+simply ignoring the failed threads. Fix that.
+
+Fixes: 2a4ca250 ("libmpathpersist: change how reservation conflicts are handled")
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+Reviewed-by: Martin Wilck <mwilck@suse.com>
+---
+ libmpathpersist/mpath_persist_int.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/libmpathpersist/mpath_persist_int.c b/libmpathpersist/mpath_persist_int.c
+index 00334a1a..3f331294 100644
+--- a/libmpathpersist/mpath_persist_int.c
++++ b/libmpathpersist/mpath_persist_int.c
+@@ -542,19 +542,19 @@ static int mpath_prout_reg(struct multipath *mpp,int rq_servact, int rq_scope,
+ 			}
+ 		}
+ 		for (i = 0; i < count; i++) {
+-			if (thread[i].param.status != MPATH_PR_SKIP &&
+-			    thread[i].param.status != MPATH_PR_THREAD_ERROR) {
++			if (thread[i].param.status == MPATH_PR_SKIP)
++				continue;
++			if (thread[i].param.status != MPATH_PR_THREAD_ERROR) {
+ 				rc = pthread_join(thread[i].id, NULL);
+ 				if (rc) {
+ 					condlog(3, "%s: failed to join thread while retrying %d",
+ 						mpp->wwid, i);
+ 				}
+-				if (thread[i].param.status ==
+-				    MPATH_PR_RETRYABLE_ERROR)
+-					retryable_error = true;
+-				else if (status == MPATH_PR_SUCCESS)
+-					status = thread[i].param.status;
+ 			}
++			if (thread[i].param.status == MPATH_PR_RETRYABLE_ERROR)
++				retryable_error = true;
++			else if (status == MPATH_PR_SUCCESS)
++				status = thread[i].param.status;
+ 		}
+ 		need_retry = false;
+ 	}

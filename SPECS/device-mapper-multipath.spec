@@ -1,6 +1,6 @@
 Name:    device-mapper-multipath
 Version: 0.8.7
-Release: 45%{?dist}
+Release: 47%{?dist}
 Summary: Tools to manage multipath devices using device-mapper
 License: GPLv2
 URL:     http://christophe.varoqui.free.fr/
@@ -220,6 +220,8 @@ Patch0207: 0207-multipathd-implement-purge-functionality-for-disconn.patch
 Patch0208: 0208-libmpathpersist-fix-register-retry-status-checking.patch
 Patch0209: 0209-multipathd-remember-number-of-registered-keys-when-i.patch
 Patch0210: 0210-libmpathpersist-fix-code-for-skipping-multipathd-pat.patch
+Patch0211: 0211-libmultipath-set-offline-whenever-path-is-not-online.patch
+Patch0212: 0212-libmultipath-return-pending-state-when-port-is-in-tr.patch
 
 # runtime
 Requires: %{name}-libs = %{version}-%{release}
@@ -422,6 +424,18 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
+* Tue Apr 21 2026 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-47
+- Add 0212-libmultipath-return-pending-state-when-port-is-in-tr.patch
+  * Fixes RHEL-165540 ("multipath's tur checker should mark
+    transitioning paths as PATH_PENDING")
+- Resolves: RHEL-165540
+
+* Fri Mar  6 2026 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-46
+- Add 0211-libmultipath-set-offline-whenever-path-is-not-online.patch
+  * Fixes RHEL-151448 ("multipathd doesn't print checker messages for
+    some offline path states [rhel-9]")
+- Resolves: RHEL-151448
+
 * Thu Feb 19 2026 Benjamin Marzinski <bmarzins@redhat.com> - 0.8.7-45
 - Add 0208-libmpathpersist-fix-register-retry-status-checking.patch
 - Add 0209-multipathd-remember-number-of-registered-keys-when-i.patch

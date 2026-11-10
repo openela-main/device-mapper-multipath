@@ -1,6 +1,6 @@
 Name:    device-mapper-multipath
 Version: 0.9.9
-Release: 18%{?dist}
+Release: 19%{?dist}
 Summary: Tools to manage multipath devices using device-mapper
 License: GPLv2
 URL:     http://christophe.varoqui.free.fr/
@@ -97,6 +97,7 @@ Patch0084: 0084-multipathd-implement-purge-functionality-for-disconn.patch
 Patch0085: 0085-libmpathpersist-fix-register-retry-status-checking.patch
 Patch0086: 0086-multipathd-remember-number-of-registered-keys-when-i.patch
 Patch0087: 0087-libmpathpersist-fix-code-for-skipping-multipathd-pat.patch
+Patch0088: 0088-libmultipath-set-offline-whenever-path-is-not-online.patch
 
 # runtime
 Requires: %{name}-libs = %{version}-%{release}
@@ -306,6 +307,12 @@ fi
 %{_pkgconfdir}/libdmmp.pc
 
 %changelog
+* Fri Mar  6 2026 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-19
+- Add 0088-libmultipath-set-offline-whenever-path-is-not-online.patch
+  * Fixes RHEL-151447 ("multipathd doesn't print checker messages for
+    some offline path states")
+- Resolves: RHEL-151447
+
 * Thu Feb 19 2026 Benjamin Marzinski <bmarzins@redhat.com> - 0.9.9-18
 - Add 0085-libmpathpersist-fix-register-retry-status-checking.patch
 - Add 0086-multipathd-remember-number-of-registered-keys-when-i.patch
